@@ -14,6 +14,34 @@ def load_dataframe() -> pd.DataFrame:
         )
     return pd.read_csv(DATA_PATH)
 
+def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Processing data for ML:
+    - Filling gaps
+    - encoding categories
+    - creating features
+    """
+    df = df.copy() # Copy for not changing original DF
+
+    #1. Filling gaps in digital columns
+    df['age'] = df['age'].fillna(df['age'].median())
+    df['fare'] = df['fare'].fillna(df['fare'].median())
+
+    #2. Filling gaps in categorical columns
+    df["embarked"] = df['embarked'].fillna(df['embarked'].mode()[0])
+    df['cabin'] = df['cabin'].fillna('unknown')
+
+    #3. Encoding categories features
+    df['sex'] = df['sex'].map({'male': 0, 'female': 1})
+    df['embarked'] = df['embarked'].map({'C': 0, 'Q': 1, 'S': 2})
+
+    #4. Feature engineering
+    df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
+    df['isAlone'] = (df['FamilySize'] == 1).astype(int)
+
+    return df
+
+
 @router.get("/status")
 def data_status():
     if not DATA_PATH.exists():
@@ -48,6 +76,52 @@ def data_preview(limit: int = 10):
 @router.get("/stats")
 def data_stats():
     df = load_dataframe()
+    stats = df.describe(include="all").fillna("").to_dict()
     return {
-        "statistics": df.describe(include="all").fillna("").to_dict()
+        "statistics": stats
     }
+
+@router.get("/processed")
+def data_processed(limit: int = 10):
+    """
+    Returns processed data ready for ML
+    """
+
+    df = load_dataframe()
+    df_processed = preprocess_dataframe(df)
+
+    return {
+        "original_shape": {"rows": len(df), "columns": len(df.columns)},
+        "processed_shape": {"rows": len(df_processed), "columns": len(df_processed.columns)},
+        "new_features": ["FamilySize", "IsAlone"],
+        "preview": df_processed.head(limit).fillna("").to_dict(orient="records")
+    }
+
+@router.get("/missing")
+def data_missing():
+    """
+    Comparison gaps before and after processing
+    """
+
+    df = load_dataframe()
+    df_processed = preprocess_dataframe(df)
+
+    missing_before = df.isnull().sum()
+    missing_after = df_processed.isnull().sum()
+
+    comparison = {
+        col: {
+            "before": int(missing_before[col]),
+            "after": int(missing_after[col])
+        }
+
+        for col in df.columns
+        if missing_before[col] > 0
+    }
+
+    return {
+        "total_before": int(missing_before.sum()),
+        "total_after": int(missing_after.sum()),
+        "by_column": comparison
+    }
+
