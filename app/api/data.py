@@ -24,16 +24,16 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy() # Copy for not changing original DF
 
     #1. Filling gaps in digital columns
-    df['age'] = df['age'].fillna(df['age'].median())
-    df['fare'] = df['fare'].fillna(df['fare'].median())
+    df['Age'] = df['Age'].fillna(df['Age'].median())
+    df['Fare'] = df['Fare'].fillna(df['Fare'].median())
 
     #2. Filling gaps in categorical columns
-    df["embarked"] = df['embarked'].fillna(df['embarked'].mode()[0])
-    df['cabin'] = df['cabin'].fillna('unknown')
+    df["Embarked"] = df['Embarked'].fillna(df['Embarked'].mode()[0])
+    df['Cabin'] = df['Cabin'].fillna('Unknown')
 
     #3. Encoding categories features
-    df['sex'] = df['sex'].map({'male': 0, 'female': 1})
-    df['embarked'] = df['embarked'].map({'C': 0, 'Q': 1, 'S': 2})
+    df['Sex'] = df['Sex'].map({'male': 0, 'female': 1})
+    df['Embarked'] = df['Embarked'].map({'C': 0, 'Q': 1, 'S': 2})
 
     #4. Feature engineering
     df['FamilySize'] = df['SibSp'] + df['Parch'] + 1

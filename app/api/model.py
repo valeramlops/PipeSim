@@ -4,8 +4,10 @@ import pandas as pd
 import joblib
 from datetime import datetime
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+
 from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
 
 from app.api.data import load_dataframe, preprocess_dataframe
@@ -41,7 +43,7 @@ async def model_status():
     info = get_model_info()
     return {
         "status": "trained",
-        "trained_at": info.get("trained_at") if info else None,
+        "algorithm": info.get("algorithm") if info else "Unknown",
         "accuracy": info.get("accuracy") if info else None
     }
 
@@ -52,24 +54,30 @@ def train_model():
     """
 
     # 1. Loading and processing data
-    df = load_dataframe()
-    df_processed = preprocess_dataframe(df)
+    try:
+        df = load_dataframe()
+        df_processed = preprocess_dataframe(df)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Data error: {str(e)}"
+        )
 
-    # 2. NaN checking
+    # NaN checking
     if df_processed.isnull().sum().sum() > 0:
         raise HTTPException(
             status_code=500,
             detail="Processed data contain NaN values. Cannot train model"
         )
     
-    # 3. Choosing features and targets
+    # 2. Choosing features and targets
     feature_columns = ['Pclass', 'Sex', 'Age',
     'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
 
     X = df_processed[feature_columns]
     y = df_processed['Survived']
 
-    # 4. Splitting into train/test
+    # Splitting into train/test
     X_train, X_test, y_train, y_test = train_test_split (
         X,
         y,
@@ -77,47 +85,94 @@ def train_model():
         random_state=42
     )
 
-    # 5. Training model
-    model = LogisticRegression(max_iter=1000, random_state=42)
-    model.fit(X_train, y_train)
+    # 3. Candidate selection (List of models and their settings)
+    model_config = [
+        {
+            "name": "LogisticRegression",
+            "model": LogisticRegression(
+                random_state=42,
+                max_iter=1000
+            ),
+            "params": {
+                "C": [0.1, 1.0, 10.0] # Regulation strenght
+            }
+        },
+        {
+            "name": "RandomForest",
+            "model": RandomForestClassifier(
+                random_state=42,
+            ),
+            "params": {
+                "n_estimators": [50, 100], # Tree value: 50 or 100
+                "max_depth": [5, 10, None], # Tree's depth
+                "min_samples_split": [2, 5] # Face-control
+            }
+        }
+    ]
 
-    # 6. Quality assessment
-    y_pred = model.predict(X_test)
+    best_model = None
+    best_score = -1
+    best_info = {}
 
-    accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    conf_matrix = confusion_matrix(y_test, y_pred)
+    experiment_log = [] # Experiment log to return to the user
 
-    # 7. Saving model
+    # 4. Model training cycle
+
+    for config in model_config:
+        # GridSearch - parameter tuning with cross-validation (cv=3)
+        grid = GridSearchCV(config["model"], config["params"], cv=3, scoring='accuracy')
+        grid.fit(X_train, y_train)
+
+        # Picking the best model version
+        current_best_model = grid.best_estimator_
+
+        # Testing on deployed sample (Test Set)
+        y_pred = current_best_model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        
+        # Logging result
+        experiment_log.append({
+            "algorithm": config["name"],
+            "best_params": grid.best_params_,
+            "accuracy": float(accuracy)
+        })
+
+        # Comparison: if this model better than the previouse leader, it becomes the new leader
+        if accuracy > best_score:
+            best_score = accuracy
+            best_model = current_best_model
+
+            # Collecting winner's stats
+            precision = precision_score(y_test, y_pred)
+            recall = recall_score(y_test, y_pred)
+            conf_matrix = confusion_matrix(y_test, y_pred)
+
+            best_info = {
+                "trained_at": datetime.utcnow().isoformat(),
+                "algorithm": config["name"],
+                "best_params": grid.best_params_,
+                "features": feature_columns,
+                "train_size": len(X_train),
+                "test_size": len(X_test),
+                "accuracy": float(accuracy),
+                "precision": float(precision),
+                "recall": float(recall),
+                "confusion_matrix": conf_matrix.tolist()
+            }
+
+    # 5. Saving winner
     MODEL_PATH.parent.mkdir(exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
+    joblib.dump(best_info, MODEL_PATH)
+    save_model_info(best_info)
     
-    # 8. Saving metadata
-    model_info = {
-        "trained_at": datetime.utcnow().isoformat(),
-        "algorithm": "LogisticRegression",
-        "features": feature_columns,
-        "train_size": len(X_train),
-        "test_size": len(X_test),
-        "accuracy": float(accuracy),
-        "precision": float(precision),
-        "recall": float(recall),
-        "confusion_matrix": conf_matrix.tolist()
-    }
-
-    save_model_info(model_info)
-
     return {
         "status": "success",
-        "message": "Model trained successfully",
-        "metrix": {
-            "accuracy": float(accuracy),
-            "precision": float(precision),
-            "recall": float(recall),
+        "message": f"Training complete. Winner: {best_info['algorithm']}",
+        "winner_metrics": {
+            "accuracy": best_info['accuracy'],
+            "precision": best_info['precision']
         },
-        "train_samples": len(X_train),
-        "test_samples": len(X_test)
+        "experiments": experiment_log
     }
 
 @router.get("/info")
@@ -156,6 +211,7 @@ def model_metrics():
     conf_matrix = info.get("confusion_matrix", [[0, 0], [0, 0]])
 
     return {
+        "algorithm": info.get("algorithm"),
         "accuracy": info.get("accuracy"),
         "precision": info.get("precision"),
         "recall": info.get("recall"),
