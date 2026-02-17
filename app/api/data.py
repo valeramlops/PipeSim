@@ -124,4 +124,3 @@ def data_missing():
         "total_after": int(missing_after.sum()),
         "by_column": comparison
     }
-

@@ -31,26 +31,6 @@ ENV/
 .env.local
 .env.*.local
 
-# Data (PipeSim specific)
-data/
-datasets/
-*.csv
-*.xlsx
-*.xls
-*.json
-*.parquet
-
-# ML models and artifacts
-models/
-*.pkl
-*.joblib
-*.h5
-*.pt
-*.pth
-checkpoints/
-runs/
-mlruns/
-
 # Logs
 logs/
 *.log
