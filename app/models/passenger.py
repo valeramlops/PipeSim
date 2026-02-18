@@ -17,3 +17,4 @@ class Passenger(Base):
     Fare = Column(Float)
     Cabin = Column(String, nullable=True)
     Embarked = Column(String, nullable=True)
+    is_processed = Column(Boolean, default=False)

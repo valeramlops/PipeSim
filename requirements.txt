@@ -11,4 +11,4 @@ asyncpg == 0.31.0
 sqlalchemy == 2.0.46
 psycopg2-binary == 2.9.11
 greenlet == 3.3.1
-
+alembic == 1.18.4
