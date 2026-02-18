@@ -222,4 +222,3 @@ def model_metrics():
             "true_positive": conf_matrix[1][1]
         }
     }
-

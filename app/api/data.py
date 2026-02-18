@@ -1,6 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import pandas as pd
 from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.core.database import get_db
+from app.models.passenger import Passenger
 
 router = APIRouter()
 
@@ -41,6 +45,15 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+@router.get("/db-test")
+async def read_passengers_from_db(db: AsyncSession = Depends(get_db)):
+    """
+    Test endpoint: Reads first 5 passengers from PostgreSQL
+    """
+    # Making SQL-request: SELECT * FROM passengers LIMIT 5
+    result = await db.execute(select(Passenger).limit(5))
+    passengers = result.scalars().all()
+    return passengers
 
 @router.get("/status")
 def data_status():
