@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pathlib import Path
 import pandas as pd
 import joblib
@@ -10,7 +10,12 @@ from sklearn.ensemble import RandomForestClassifier
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Select, desc
+
 from app.api.data import load_dataframe, preprocess_dataframe
+from app.core.database import get_db
+from app.models.model_version import ModelVersion
 
 router = APIRouter()
 
@@ -48,9 +53,9 @@ async def model_status():
     }
 
 @router.post("/train")
-def train_model():
+async def train_model(db: AsyncSession = Depends(get_db)):
     """
-    Train model on Titanic dataset
+    Train model on Titanic dataset with version history
     """
 
     # 1. Loading and processing data
@@ -113,11 +118,9 @@ def train_model():
     best_model = None
     best_score = -1
     best_info = {}
-
     experiment_log = [] # Experiment log to return to the user
 
     # 4. Model training cycle
-
     for config in model_config:
         # GridSearch - parameter tuning with cross-validation (cv=3)
         grid = GridSearchCV(config["model"], config["params"], cv=3, scoring='accuracy')
@@ -160,13 +163,32 @@ def train_model():
                 "confusion_matrix": conf_matrix.tolist()
             }
 
-    # 5. Saving winner
+    # 5. Saving winner and versioning
     MODEL_PATH.parent.mkdir(exist_ok=True)
-    joblib.dump(best_info, MODEL_PATH)
+    joblib.dump(best_model, MODEL_PATH)
     save_model_info(best_info)
     
+    # Make unique name for version history
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    version_filename = f"model_{best_info['algorithm']}_{timestamp}.pkl"
+    version_path = Path("models") / version_filename
+    
+    # Save model copy for history
+    joblib.dump(best_model, version_path)
+
+    # 6. Write information about new version into DB
+    new_version = ModelVersion(
+        algorithm = best_info['algorithm'],
+        metrics = best_info,
+        filepath = str(version_path)
+    )
+    db.add(new_version)
+    await db.commit()
+    await db.refresh(new_version)
+
     return {
         "status": "success",
+        "version_id": new_version.id,
         "message": f"Training complete. Winner: {best_info['algorithm']}",
         "winner_metrics": {
             "accuracy": best_info['accuracy'],
@@ -174,6 +196,16 @@ def train_model():
         },
         "experiments": experiment_log
     }
+
+@router.get("/history")
+async def get_model_history(db: AsyncSession = Depends(get_db)):
+    """
+    Get history of all trained models
+    """
+    # Sort by ID (desc)
+    result = await db.execute(Select(ModelVersion).order_by(desc(ModelVersion.id)))
+    versions = result.scalars().all()
+    return versions
 
 @router.get("/info")
 def model_info():
@@ -192,7 +224,6 @@ def model_info():
             status_code=404,
             detail="Model info not found"
         )
-    
     return info
 
 @router.get("/metrics")
