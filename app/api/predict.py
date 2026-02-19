@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pathlib import Path
 from pydantic import BaseModel
 import pandas as pd
@@ -6,9 +6,11 @@ import joblib
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import Select, desc
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
 
-from app.core.database import get_db
+import uuid
+
+from app.core.database import AsyncSessionLocal, get_db
 from app.models.prediction import Prediction as PredictionModel
 from app.api.data import preprocess_dataframe
 
@@ -16,17 +18,17 @@ router = APIRouter()
 
 MODEL_PATH = Path("models/titanic_model.pkl")
 
+jobs: Dict[str, dict] = {}
+
 # For validation input data
 class PassengerData(BaseModel):
     Pclass: int
-    Sex: int
+    Sex: str
     Age: float
     SibSp: int
     Parch: int
     Fare: float
-    Embarked: int
-    FamilySize: int
-    isAlone: int
+    Embarked: str
     Cabin: Optional[str] = None
 
 @router.post("/status")
@@ -42,37 +44,35 @@ def predict_status():
         "message": "Prediction service is ready"
     }
 
-@router.post("/")
-async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db)):
-    """
-    Making prediction and save in database
-    """
 
+def process_and_predict(passengers: List[PassengerData]) -> Tuple[List[Dict], list, list]:
+    """
+    Accepts a list of passengers, performs preprocessing, and returns predictions.
+    Ideal for both single and bulk requests.
+    """
     if not MODEL_PATH.exists():
         raise HTTPException (
             status_code=404,
             detail="Model not found. Train the model first"
         )
-    
-    # 1. Loading model
+
     model = joblib.load(MODEL_PATH)
 
-    # 2. Convert the raw user data into a DataFrame
-    raw_input_dict = data.dict()
-    df_raw = pd.DataFrame([raw_input_dict])
+    # 1. Raw data -> DataFrame
+    raw_data_list = [p.dict() for p in passengers]
+    df_raw = pd.DataFrame(raw_data_list)
 
-    # 3. We run the data through a single preprocessing pipeline
+    # 2. Preprocessing
     try:
         df_processed = preprocess_dataframe(df_raw)
     except Exception as e:
         raise HTTPException(
-            status_code=500,
+            status_code=500, 
             detail=f"Preprocessing error: {str(e)}"
         )
     
-    # 4. Make sure that we select exactly the features that the model needs
     feature_columns = ['Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
-
+    
     missing_cols = [col for col in feature_columns if col not in df_processed.columns]
     if missing_cols:
         raise HTTPException(
@@ -81,18 +81,34 @@ async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db
     
     X_input = df_processed[feature_columns]
 
-    # 5. Make predict
+    # 3. Prediction
     try:
-        prediction = model.predict(X_input)[0]
+        predictions = model.predict(X_input)
         # Get confidence
-        probability = model.predict_proba(X_input)[0][1]
+        probabilities = model.predict_proba(X_input)[:, 1]
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Prediction error: {str(e)}"
         )
     
-    # 6. Write in database
+    return raw_data_list, predictions.tolist(), probabilities.tolist()
+
+@router.post("/")
+async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db)):
+    """
+    Making prediction for one passenger
+    """
+
+    # 1. Using process_and_predict function
+    raw_data_list, predictions, probabilities = process_and_predict([data])
+
+    # Get results
+    prediction = predictions[0]
+    probability = probabilities[0]
+    raw_input_dict = raw_data_list[0]
+
+    # 2. Write in database
     new_prediction = PredictionModel(
         passenger_data = raw_input_dict,
         prediction_result = int(prediction),
@@ -102,7 +118,6 @@ async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db
     await db.commit()
     await db.refresh(new_prediction)
 
-    # 7. Return results to user
     return {
         "status": "success",
         "prediction_id": new_prediction.id,
@@ -111,12 +126,86 @@ async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db
         "message": "Passenger survived" if prediction == 1 else "Passenger did not survive"
     }
 
+async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
+    """
+    Background task for mass prediction
+    """
+    jobs[job_id]["status"] = "processing"
+
+    try:
+        # 1. Also using process_and_predict function
+        raw_data_list, predictions, probabilities = process_and_predict(passengers)
+        
+        results = []
+
+        # 2. Save in database
+        async with AsyncSessionLocal() as db:
+            db_predictions = []
+            for i in range(len(predictions)):
+                results.append({
+                    "passenger_index": i,
+                    "survived": bool(predictions[i]),
+                    "probability": float(probabilities[i])
+                })
+
+                db_predictions.append(PredictionModel(
+                    passenger_data = raw_data_list[i],
+                    prediction_results = int(predictions[i]),
+                    probability = float(probabilities[i])
+                ))
+
+            db.add_all(db_predictions)
+            await db.commit()
+
+        jobs[job_id]['status'] = "completed"
+        jobs[job_id]['result'] = results
+
+    except Exception as e:
+        jobs[job_id]['status'] = "failed"
+        jobs[job_id]['error'] = str(e)
+
+@router.post("/batch")
+async def make_batch_prediction(passengers: List[PassengerData], background_tasks: BackgroundTasks):
+    """
+    It accepts a list of passengers and immediately returns a number (job_id).
+    """
+    if not MODEL_PATH.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Model not trained yet"
+        )
+    
+    # Generating unique ticket number
+    job_id = str(uuid.uuid4())
+
+    # Registration task with pending status (in queue)
+    jobs[job_id] = {"status": "pending", "result": None}
+
+    # Send function working on background
+    background_tasks.add_task(run_batch_prediction, job_id, passengers)
+
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "message": f"Received {len(passengers)} passengers. Processing started in background"
+    }
+
+@router.get("/batch/{job_id}/status")
+async def get_batch_status(job_id: str):
+    """
+    # Get status and claim results by number
+    """
+    if job_id not in jobs:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found"
+        )
+    return jobs[job_id]
+
 @router.get("/history")
 async def get_prediction_history(db: AsyncSession = Depends(get_db)):
     """
-    Get history of all prediction
+    Get history of all predicts
     """
-    # Sort by new to old
     result = await db.execute(Select(PredictionModel).order_by(desc(PredictionModel.created_at)))
-    predictions = result.scalars().all()
-    return predictions
+    return result.scalars().all()

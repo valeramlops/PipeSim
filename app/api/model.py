@@ -76,7 +76,7 @@ async def train_model(db: AsyncSession = Depends(get_db)):
         )
     
     # 2. Choosing features and targets
-    feature_columns = ['Pclass', 'Sex', 'Age',
+    feature_columns = ['Pclass', 'Sex', 'Age', 'SibSp',
     'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
 
     X = df_processed[feature_columns]
