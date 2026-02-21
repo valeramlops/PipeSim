@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic import BaseModel
 import pandas as pd
 import joblib
+import json
+import hashlib
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
@@ -12,6 +14,7 @@ import uuid
 
 from app.core.database import AsyncSessionLocal, get_db
 from app.models.prediction import Prediction as PredictionModel
+from app.models.feature_store import ProcessedFeature
 from app.api.data import preprocess_dataframe
 
 router = APIRouter()
@@ -31,6 +34,13 @@ class PassengerData(BaseModel):
     Embarked: str
     Cabin: Optional[str] = None
 
+def get_data_hash(data: dict) -> str:
+    """
+    Generate SHA-256 hash from dict, sorted key for stability
+    """
+    encoded = json.dumps(data, sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
 @router.post("/status")
 def predict_status():
     if not MODEL_PATH.exists():
@@ -45,10 +55,9 @@ def predict_status():
     }
 
 
-def process_and_predict(passengers: List[PassengerData]) -> Tuple[List[Dict], list, list]:
+async def process_and_predict(passengers: List[PassengerData], db: AsyncSession) -> Tuple[List[Dict], list, list]:
     """
-    Accepts a list of passengers, performs preprocessing, and returns predictions.
-    Ideal for both single and bulk requests.
+    [CHANGED] Now asynchronous. Checks the Feature Store before doing preprocessing.
     """
     if not MODEL_PATH.exists():
         raise HTTPException (
@@ -57,29 +66,40 @@ def process_and_predict(passengers: List[PassengerData]) -> Tuple[List[Dict], li
         )
 
     model = joblib.load(MODEL_PATH)
-
-    # 1. Raw data -> DataFrame
     raw_data_list = [p.dict() for p in passengers]
-    df_raw = pd.DataFrame(raw_data_list)
 
-    # 2. Preprocessing
-    try:
-        df_processed = preprocess_dataframe(df_raw)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Preprocessing error: {str(e)}"
-        )
-    
-    feature_columns = ['Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
-    
-    missing_cols = [col for col in feature_columns if col not in df_processed.columns]
-    if missing_cols:
-        raise HTTPException(
-            status_code=500, detail=f"Missing processed columns: {missing_cols}"
-        )
-    
-    X_input = df_processed[feature_columns]
+    final_features_list = []
+
+    # 1. Checking cache
+    for raw_data in raw_data_list:
+        data_hash = get_data_hash(raw_data)
+
+        # Search in db
+        result = await db.execute(select(ProcessedFeature).where(ProcessedFeature.raw_data_hash == data_hash))
+        cached_feature = result.scalars().first()
+
+        if cached_feature:
+            # Take ready features
+            final_features_list.append(cached_feature.features)
+        else:
+            # Not in cache. Doing heavy preprocessing via Pandas
+            df_raw = pd.DataFrame([raw_data])
+            df_processed = preprocess_dataframe(df_raw)
+
+            feature_columns = ['Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
+            processed_dict = df_processed[feature_columns].iloc[0].to_dict()
+
+            final_features_list.append(processed_dict)
+
+            # Save result in db
+            new_cache = ProcessedFeature(raw_data_hash=data_hash, features=processed_dict)
+            db.add(new_cache)
+            
+            # Flush to write to the current transaction without closing her
+            await db.flush()
+
+    # 2. Collecting final DataFrame from features (cached + new) 
+    X_input = pd.DataFrame(final_features_list)
 
     # 3. Prediction
     try:
@@ -101,7 +121,7 @@ async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db
     """
 
     # 1. Using process_and_predict function
-    raw_data_list, predictions, probabilities = process_and_predict([data])
+    raw_data_list, predictions, probabilities = await process_and_predict([data], db)
 
     # Get results
     prediction = predictions[0]
@@ -114,6 +134,7 @@ async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db
         prediction_result = int(prediction),
         probability = float(probability)
     )
+
     db.add(new_prediction)
     await db.commit()
     await db.refresh(new_prediction)
@@ -133,25 +154,24 @@ async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
     jobs[job_id]["status"] = "processing"
 
     try:
-        # 1. Also using process_and_predict function
-        raw_data_list, predictions, probabilities = process_and_predict(passengers)
-        
-        results = []
-
-        # 2. Save in database
+        # Save in database
         async with AsyncSessionLocal() as db:
+            raw_data_list, predictions, probabilities = await process_and_predict(passengers, db)
+        
+            results = []
             db_predictions = []
-            for i in range(len(predictions)):
+
+            for idx, (raw_data, pred, prob) in enumerate(zip(raw_data_list, predictions, probabilities)):
                 results.append({
-                    "passenger_index": i,
-                    "survived": bool(predictions[i]),
-                    "probability": float(probabilities[i])
+                    "passenger_index": idx,
+                    "survived": bool(pred),
+                    "probability": float(prob)
                 })
 
                 db_predictions.append(PredictionModel(
-                    passenger_data = raw_data_list[i],
-                    prediction_result = int(predictions[i]),
-                    probability = float(probabilities[i])
+                    passenger_data = raw_data,
+                    prediction_result = int(pred),
+                    probability = float(prob)
                 ))
 
             db.add_all(db_predictions)
@@ -163,7 +183,6 @@ async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
     except Exception as e:
         jobs[job_id]['status'] = "failed"
         jobs[job_id]['error'] = str(e)
-
         print(f"[Background Task Error] Job {job_id} failed: {str(e)}")
 
 @router.post("/batch")
