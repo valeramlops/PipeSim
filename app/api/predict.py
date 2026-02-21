@@ -58,6 +58,8 @@ def predict_status():
 async def process_and_predict(passengers: List[PassengerData], db: AsyncSession) -> Tuple[List[Dict], list, list]:
     """
     [CHANGED] Now asynchronous. Checks the Feature Store before doing preprocessing.
+    [OPTIMIZED] Asynchronous Feature Store Cache.
+    Solves N+1 Problem using Bulk Select and O(1) Hash Map lookups.
     """
     if not MODEL_PATH.exists():
         raise HTTPException (
@@ -68,35 +70,64 @@ async def process_and_predict(passengers: List[PassengerData], db: AsyncSession)
     model = joblib.load(MODEL_PATH)
     raw_data_list = [p.dict() for p in passengers]
 
-    final_features_list = []
+    # 1. Work with cache
+    # Stage 1: Cache generating
+    # Collecting list of all caches
+    hashes_list = [get_data_hash(raw_data) for raw_data in raw_data_list]
 
-    # 1. Checking cache
-    for raw_data in raw_data_list:
-        data_hash = get_data_hash(raw_data)
+    result = await db.execute (
+        select(ProcessedFeature).where(ProcessedFeature.raw_data_hash.in_(hashes_list))
+    )
+    cached_features = result.scalars().all()
 
-        # Search in db
-        result = await db.execute(select(ProcessedFeature).where(ProcessedFeature.raw_data_hash == data_hash))
-        cached_feature = result.scalars().first()
+    # Turning the database response into a dictionary for instant O(1) search
+    cache_dict = {item.raw_data_hash: item.features for item in cached_features}
+    
+    # Stage 2: Division into baskets
+    final_features_list = [None] * len(raw_data_list)
 
-        if cached_feature:
-            # Take ready features
-            final_features_list.append(cached_feature.features)
+    uncached_indices = []
+    uncached_raw_data = []
+    uncached_hashes = []
+    
+    for i, (raw_data, data_hash) in enumerate(zip(raw_data_list, hashes_list)):
+        if data_hash in cache_dict:
+            final_features_list[i] = cache_dict[data_hash]
         else:
-            # Not in cache. Doing heavy preprocessing via Pandas
-            df_raw = pd.DataFrame([raw_data])
-            df_processed = preprocess_dataframe(df_raw)
+            uncached_indices.append(i)
+            uncached_raw_data.append(raw_data)
+            uncached_hashes.append(data_hash)
 
-            feature_columns = ['Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
-            processed_dict = df_processed[feature_columns].iloc[0].to_dict()
+    # Stage 3: Processing data
+    feature_columns = ['Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Embarked', 'FamilySize', 'isAlone']
+    if uncached_raw_data:
+        df_bulk_raw = pd.DataFrame(uncached_raw_data)
 
-            final_features_list.append(processed_dict)
+        try:
+            df_bulk_processed = preprocess_dataframe(df_bulk_raw)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Preprocessing error: {str(e)}"
+            )
+        
+        missing_cols = [col for col in feature_columns if col not in df_bulk_processed.columns]
+        if missing_cols:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Missing processed columns: {missing_cols}"
+            )
+        
+        processed_dicts = df_bulk_processed[feature_columns].to_dict(orient='records')
 
-            # Save result in db
-            new_cache = ProcessedFeature(raw_data_hash=data_hash, features=processed_dict)
-            db.add(new_cache)
-            
-            # Flush to write to the current transaction without closing her
-            await db.flush()
+        new_caches = []
+        for idx, proc_dict, d_hash in zip(uncached_indices, processed_dicts, uncached_hashes):
+            final_features_list[idx] = proc_dict
+            new_caches.append(ProcessedFeature(raw_data_hash=d_hash, features=proc_dict))
+
+        # Save features in db
+        db.add_all(new_caches)
+        await db.flush()
 
     # 2. Collecting final DataFrame from features (cached + new) 
     X_input = pd.DataFrame(final_features_list)
