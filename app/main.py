@@ -20,7 +20,6 @@ app.include_router(model.router, prefix="/api/model", tags=["Model"])
 app.include_router(predict.router, prefix="/api/predict", tags=["Predict"])
 app.include_router(monitor.router, prefix="/api/monitor", tags=["Monitor"])
 
-
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(

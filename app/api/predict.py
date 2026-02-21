@@ -5,7 +5,7 @@ import pandas as pd
 import joblib
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Select, desc
+from sqlalchemy import select, desc
 from typing import Optional, List, Dict, Tuple
 
 import uuid
@@ -150,7 +150,7 @@ async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
 
                 db_predictions.append(PredictionModel(
                     passenger_data = raw_data_list[i],
-                    prediction_results = int(predictions[i]),
+                    prediction_result = int(predictions[i]),
                     probability = float(probabilities[i])
                 ))
 
@@ -163,6 +163,8 @@ async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
     except Exception as e:
         jobs[job_id]['status'] = "failed"
         jobs[job_id]['error'] = str(e)
+
+        print(f"[Background Task Error] Job {job_id} failed: {str(e)}")
 
 @router.post("/batch")
 async def make_batch_prediction(passengers: List[PassengerData], background_tasks: BackgroundTasks):
@@ -207,5 +209,5 @@ async def get_prediction_history(db: AsyncSession = Depends(get_db)):
     """
     Get history of all predicts
     """
-    result = await db.execute(Select(PredictionModel).order_by(desc(PredictionModel.created_at)))
+    result = await db.execute(select(PredictionModel).order_by(desc(PredictionModel.created_at)))
     return result.scalars().all()

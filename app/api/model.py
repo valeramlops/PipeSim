@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Select, desc
+from sqlalchemy import select, desc
 
 from app.api.data import load_dataframe, preprocess_dataframe
 from app.core.database import get_db
@@ -203,7 +203,7 @@ async def get_model_history(db: AsyncSession = Depends(get_db)):
     Get history of all trained models
     """
     # Sort by ID (desc)
-    result = await db.execute(Select(ModelVersion).order_by(desc(ModelVersion.id)))
+    result = await db.execute(select(ModelVersion).order_by(desc(ModelVersion.id)))
     versions = result.scalars().all()
     return versions
 
