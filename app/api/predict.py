@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import pandas as pd
 import joblib
 import json
@@ -33,6 +33,56 @@ class PassengerData(BaseModel):
     Fare: float
     Embarked: str
     Cabin: Optional[str] = None
+
+    # Validating data
+    @field_validator('Pclass')
+    @classmethod
+    def check_pclass(cls, value):
+        if value not in [1, 2, 3]:
+            raise ValueError("Pclass must be 1, 2 or 3")
+        return value
+
+    @field_validator("Sex")
+    @classmethod
+    def check_sex(cls,value):
+        if value not in ['male', 'female']:
+            raise ValueError("Sex must be 'male' or 'female'")
+        return value
+
+    @field_validator("Age")
+    @classmethod
+    def check_age(cls, value):
+        if value < 0:
+            raise ValueError("Age cannot be negative")
+        return value
+
+    @field_validator("Fare")
+    @classmethod
+    def check_fare(cls, value):
+        if value < 0:
+            raise ValueError("Fare cannot be negative")
+        return value
+    
+    @field_validator("SibSp")
+    @classmethod
+    def check_sibsp(cls, value):
+        if value < 0 or value > 8:
+            raise ValueError ("SibSp must be between 0 and 8")
+        return value
+    
+    @field_validator("Parch")
+    @classmethod
+    def check_parch(cls, value):
+        if value < 0 or value > 6:
+            raise ValueError("Parch must be between 0 and 6")
+        return value
+
+    @field_validator("Embarked")
+    @classmethod
+    def check_embarked(cls, value):
+        if value not in ['C', 'Q', 'S']:
+            raise ValueError("Embarked must be 'C', 'Q' or 'S'")
+        return value
 
 def get_data_hash(data: dict) -> str:
     """
