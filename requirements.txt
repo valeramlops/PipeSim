@@ -12,3 +12,5 @@ sqlalchemy == 2.0.46
 psycopg2-binary == 2.9.11
 greenlet == 3.3.1
 alembic == 1.18.4
+pytest == 9.0.2
+httpx == 0.28.1
