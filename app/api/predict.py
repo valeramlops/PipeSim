@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Tuple
 
 import uuid
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.models.prediction import Prediction as PredictionModel
 from app.models.feature_store import ProcessedFeature
@@ -19,7 +20,7 @@ from app.api.data import preprocess_dataframe
 
 router = APIRouter()
 
-MODEL_PATH = Path("models/titanic_model.pkl")
+MODEL_PATH = Path(settings.MODEL_PATH)
 
 jobs: Dict[str, dict] = {}
 
