@@ -5,7 +5,12 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+import uuid
+import time
+
 from app.api import data, model, predict, monitor
+from app.core.logger import log
 
 app = FastAPI(
     title="PipeSim",
@@ -21,15 +26,66 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+# MIDDLEWARE
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Generating unique ID for every request
+    request_id = str(uuid.uuid4())
+
+    # Timer
+    start_time = time.time()
+
+    # Bind request_id
+    request_log = log.bind(request_id=request_id, method=request.method, path=request.url.path)
+    
+    request_log.info("Request started")
+
+    try:
+        # Throw request to endpoints
+        response = await call_next(request)
+
+        # Stop timer
+        process_time = time.time() - start_time
+
+        # Logging success end
+        request_log.info(
+            "Request compleated",
+            status_code=response.status_code,
+            duration_seconds=round(process_time, 4)
+        )
+
+        # Add ID to request's title
+        response.headers["X-Request-ID"] = request_id
+        return response
+    
+    except Exception as e:
+        process_time = time.time() - start_time
+        request_log.error(
+            "Request failed (Internal Server Error)",
+            error=str(e),
+            duration_seconds=round(process_time, 4),
+            exc_info=True # Write all red text of error (Traceback) into log
+        )
+        raise # Forward rhe error so that FastAPI returns a 500 status anyway
+
 # Simple handler errors and validation
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+
     # Get first error from list
     error = exc.errors()[0]
 
     # Get the field name (it is always at the end of the 'loc' list)
     field_name = error.get("loc")[-1]
     error_message = error.get("msg")
+
+    # Logging user error as Warning
+    log.warning(
+        "Validation Error",
+        field=field_name,
+        error=error_message,
+        path=request.url.path
+    )
 
     # Return a clear response with status 422
     return JSONResponse(
