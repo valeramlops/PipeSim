@@ -14,6 +14,8 @@ import uuid
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
+from app.core.security import verify_api_key
+from app.models.auth import APIKey as APIKeyModel
 from app.models.prediction import Prediction as PredictionModel
 from app.models.feature_store import ProcessedFeature
 from app.api.data import preprocess_dataframe
@@ -197,7 +199,7 @@ async def process_and_predict(passengers: List[PassengerData], db: AsyncSession)
     return raw_data_list, predictions.tolist(), probabilities.tolist()
 
 @router.post("/")
-async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db)):
+async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db), api_key: APIKeyModel = Depends(verify_api_key)):
     """
     Making prediction for one passenger
     """
@@ -268,7 +270,7 @@ async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
         print(f"[Background Task Error] Job {job_id} failed: {str(e)}")
 
 @router.post("/batch")
-async def make_batch_prediction(passengers: List[PassengerData], background_tasks: BackgroundTasks):
+async def make_batch_prediction(passengers: List[PassengerData], background_tasks: BackgroundTasks, api_key: APIKeyModel = Depends(verify_api_key)):
     """
     It accepts a list of passengers and immediately returns a number (job_id).
     """

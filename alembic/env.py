@@ -12,9 +12,11 @@ import sys
 import os
 sys.path.append(os.getcwd()) # So that alembic can see the app folder
 
-from app.core.database import DATABASE_URL, Base
+from app.core.database import Base
+from app.core.config import settings
+from app.models.auth import APIKey
 from app.models.prediction import Prediction
-from app.models.feature_storage import ProcessedFeature
+from app.models.feature_store import ProcessedFeature
 from app.models.passenger import Passenger # Import the models so that they are registered in Base
 from app.models.model_version import ModelVersion
 from app.models.prediction import Prediction
@@ -24,7 +26,7 @@ from app.models.prediction import Prediction
 config = context.config
 
 # 2. Replace the URL in the config with our real URL from database.py
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

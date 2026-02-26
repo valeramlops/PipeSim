@@ -1,11 +1,10 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Connecting
-DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/pipesim_db"
+from app.core.config import settings
 
 # DB engine
-engine = create_async_engine(DATABASE_URL, echo=True)
+engine = create_async_engine(settings.DATABASE_URL, echo=True)
 
 # Session fabric
 AsyncSessionLocal = sessionmaker (

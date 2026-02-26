@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 import uuid
 import time
 
-from app.api import data, model, predict, monitor
+from app.api import data, model, predict, monitor, auth
 from app.core.logger import log
 
 app = FastAPI(
@@ -101,6 +101,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # API routers
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(model.router, prefix="/api/model", tags=["Model"])
 app.include_router(predict.router, prefix="/api/predict", tags=["Predict"])
