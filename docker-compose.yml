@@ -1,0 +1,32 @@
+services:
+  # Database
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pipesim_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # API
+  api:
+    build: .
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    env_file:
+      - .env
+    environment:
+      # [IMPORTANT] Override the database URL
+      # These is no localhost (127.0.0.1) inside the Docker network. The API should knock on the 'db' service name
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/pipesim_db
+    
+# Save database settings on hard disk, so that they don't disappear when restarting
+volumes:
+  postgres_data:
