@@ -9,14 +9,21 @@ from fastapi.templating import Jinja2Templates
 import uuid
 import time
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 from app.api import data, model, predict, monitor, auth
 from app.core.logger import log
+from app.core.limiter import limiter
 
 app = FastAPI(
     title="PipeSim",
     description="Educational MLOps simulator",
     version="0.1.0"
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from pathlib import Path
 from pydantic import BaseModel, field_validator
 import pandas as pd
@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Tuple
 
 import uuid
 
+from app.core.limiter import limiter
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.security import verify_api_key
@@ -199,7 +200,13 @@ async def process_and_predict(passengers: List[PassengerData], db: AsyncSession)
     return raw_data_list, predictions.tolist(), probabilities.tolist()
 
 @router.post("/")
-async def make_prediction(data: PassengerData, db: AsyncSession = Depends(get_db), api_key: APIKeyModel = Depends(verify_api_key)):
+@limiter.limit("100/hour")
+async def make_prediction(
+    request: Request,
+    data: PassengerData,
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKeyModel = Depends(verify_api_key)
+):
     """
     Making prediction for one passenger
     """
@@ -270,7 +277,13 @@ async def run_batch_prediction(job_id: str, passengers: List[PassengerData]):
         print(f"[Background Task Error] Job {job_id} failed: {str(e)}")
 
 @router.post("/batch")
-async def make_batch_prediction(passengers: List[PassengerData], background_tasks: BackgroundTasks, api_key: APIKeyModel = Depends(verify_api_key)):
+@limiter.limit("100/hour")
+async def make_batch_prediction(
+    request: Request,
+    passengers: List[PassengerData],
+    background_tasks: BackgroundTasks,
+    api_key: APIKeyModel = Depends(verify_api_key)
+):
     """
     It accepts a list of passengers and immediately returns a number (job_id).
     """
