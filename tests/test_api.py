@@ -1,9 +1,17 @@
 from fastapi.testclient import TestClient
 from app.main import app
 from app.core.database import get_db
+from app.core.security import verify_api_key
+
+# Guard immitation
+def override_api_key():
+    return "fake_key_for_tests"
+
+app.dependency_overrides[verify_api_key] = override_api_key
+
+client = TestClient(app)
 
 # 1. Database Mock
-
 class MockSession:
     async def execute(self, query):
         # Fake answer for searching in cache
