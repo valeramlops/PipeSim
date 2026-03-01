@@ -12,7 +12,7 @@ import time
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api import data, model, predict, monitor, auth
+from app.api import data, model, predict, monitor, auth, vision
 from app.core.logger import log
 from app.core.limiter import limiter
 
@@ -108,6 +108,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # API routers
+app.include_router(vision.router, prefix="/api/vision", tags=["Computer Vision"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(model.router, prefix="/api/model", tags=["Model"])
