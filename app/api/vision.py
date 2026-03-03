@@ -15,6 +15,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 async def upload_image(image: UploadFile = File(...)):
     """
     An endpoint for loading and safe images
+    Now using mock instead of real YOLO
     """
     # 1. Security: check file format
     if not image.content_type.startswith("image/"):
@@ -31,11 +32,18 @@ async def upload_image(image: UploadFile = File(...)):
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(image.file, buffer)
 
-    # 4. Return file path
+    # 4. YOLOv11 work immitation
+    # bbox - border coords
+    mock_detections = [
+        {"class": "person", "confidence": 0.98, "bbox": [150, 200, 400, 800]},
+        {"class": "laptop", "confidence": 0.85, "bbox": [450, 600, 700, 850]}
+    ]
+
+    # 5. Return answer
     return {
+        "status": "success",
         "original_filename": image.filename,
-        "saved_filename": unique_filename,
-        "content_type": image.content_type,
         "path": str(file_path),
-        "message": "File successfully saved to disk!"
+        "detections": mock_detections,
+        "message": "Image processed with mock YOLO model"
     }
