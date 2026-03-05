@@ -57,3 +57,5 @@ uvicorn==0.40.0
 wrapt==2.1.1
 opencv-python-headless==4.13.0.92
 ultralytics==8.4.19
+sqlalchemy>=2.0.0
+asyncpg>=0.28.0
