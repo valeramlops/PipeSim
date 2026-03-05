@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
-from app.models.passenger import Passenger
+from app.schemas.passenger import Passenger
 
 router = APIRouter()
 

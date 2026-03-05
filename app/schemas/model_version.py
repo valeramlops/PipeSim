@@ -10,5 +10,3 @@ class ModelVersion(Base):
     metrics = Column(JSON) 
     filepath = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-    

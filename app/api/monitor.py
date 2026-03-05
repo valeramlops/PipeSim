@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.core.database import get_db
-from app.models.prediction import Prediction as PredictionModel
+from app.schemas.prediction import Prediction as PredictionModel
 
 router = APIRouter()
 

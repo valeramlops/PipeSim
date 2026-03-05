@@ -15,7 +15,7 @@ from sqlalchemy import select, desc
 
 from app.api.data import load_dataframe, preprocess_dataframe
 from app.core.database import get_db
-from app.models.model_version import ModelVersion
+from app.schemas.model_version import ModelVersion
 
 router = APIRouter()
 

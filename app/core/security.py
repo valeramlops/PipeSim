@@ -6,7 +6,7 @@ from sqlalchemy import select
 import hashlib
 
 from app.core.database import get_db
-from app.models.auth import APIKey as APIKeyModel
+from app.schemas.auth import APIKey as APIKeyModel
 
 # FastAPI will add this field to Swagger
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)

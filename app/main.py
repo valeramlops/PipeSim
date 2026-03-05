@@ -15,11 +15,31 @@ from slowapi.errors import RateLimitExceeded
 from app.api import data, model, predict, monitor, auth, vision
 from app.core.logger import log
 from app.core.limiter import limiter
+from app.database import engine, Base
+import app.models # noqa: F401
+
+from contextlib import asynccontextmanager
+
+# Lifespan cycle func
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Logger
+    log.info("Connecting to DB and table checking")
+    async with engine.begin() as conn:
+        # Automatically create tables based on models
+        await conn.run_sync(Base.metadata.create_all)
+    log.info("Database is ready")
+
+    yield # This is where the server is running and accepting requests
+    
+    log.info("Closing connecting with Database...")
+    await engine.dispose()
 
 app = FastAPI(
     title="PipeSim",
     description="Educational MLOps simulator",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
 app.state.limiter = limiter

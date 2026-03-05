@@ -16,9 +16,9 @@ from app.core.limiter import limiter
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.security import verify_api_key
-from app.models.auth import APIKey as APIKeyModel
-from app.models.prediction import Prediction as PredictionModel
-from app.models.feature_store import ProcessedFeature
+from app.schemas.auth import APIKey as APIKeyModel
+from app.schemas.prediction import Prediction as PredictionModel
+from app.schemas.feature_store import ProcessedFeature
 from app.api.data import preprocess_dataframe
 
 router = APIRouter()

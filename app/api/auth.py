@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import secrets
 
 from app.core.database import get_db
-from app.models.auth import APIKey
+from app.schemas.auth import APIKey
 from app.core.security import get_key_hash
 
 router = APIRouter()

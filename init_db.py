@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy import select, func
 from app.api.data import load_dataframe
 from app.core.database import engine, Base, AsyncSessionLocal
-from app.models.passenger import Passenger
+from app.schemas.passenger import Passenger
 
 async def init_db():
     # 1. Create tables (if not exist)
