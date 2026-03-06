@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Response, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Response, BackgroundTasks
 import shutil
 import uuid
 from pathlib import Path
@@ -6,7 +6,7 @@ from ultralytics import YOLO
 import cv2
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
+from app.database import get_db, async_session
 from app.models import DetectionRecord
 
 router = APIRouter()
@@ -21,9 +21,24 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Model is loaded once on server start
 model = YOLO("yolo11n.pt")
 
+# Function to save record in database
+async def save_to_db_background(record_id: str, filename: str, detections: list):
+    """
+    Open independent session and write in database
+    It is executed outside the main API response thread
+    """
+    async with async_session() as db:
+        new_record = DetectionRecord(
+            id = record_id,
+            filename = filename,
+            result_json = detections
+        )
+        db.add(new_record)
+        await db.commit()
+
 @router.post("/upload")
-async def upload_image(image: UploadFile = File(...),
-                       db: AsyncSession = Depends(get_db)):
+async def upload_image(background_tasks: BackgroundTasks,
+                       image: UploadFile = File(...)):
     """
     Endpoint for uploading images and real-time detection using YOLOv11
     """
@@ -68,24 +83,27 @@ async def upload_image(image: UploadFile = File(...),
             "bbox": [round(c, 1) for c in coords]
         })
 
-    # Saving result in Database
-    new_record = DetectionRecord(
-        filename = image.filename,
-        result_json = real_detections
-    )
+    # ------ BackgroundTasks logic ------
+    # Generating UUID right there to give it to the user immediatlely
+    detection_id = str(uuid.uuid4()) 
 
-    db.add(new_record)
-    await db.commit()
-    await db.refresh(new_record)
+    # Send the task to the background
+    # The API will not wait for this function complete
+    background_tasks.add_task(
+        save_to_db_background,
+        record_id = detection_id,
+        filename = image.filename,
+        detections = real_detections
+    )
 
     # 5. Return API
     return {
         "status": "success",
-        "detection_id": new_record.id,
+        "detection_id": detection_id,
         "original_filename": image.filename,
         "path": str(file_path),
         "detections": real_detections,
-        "message": "Image processed with YOLOv11"
+        "message": "Image processed. DB save running in background"
     }
 
 @router.post("/debug-draw")
