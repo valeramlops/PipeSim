@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import Column, String, DateTime, JSON
 from app.database import Base
 
@@ -9,4 +9,4 @@ class DetectionRecord(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     filename = Column(String, nullable=False)
     result_json = Column(JSON, nullable=False) # Here is bbox, class and conf
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,9 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Response
+from fastapi import APIRouter, UploadFile, File, HTTPException, Response, Depends
 import shutil
 import uuid
 from pathlib import Path
 from ultralytics import YOLO
 import cv2
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import get_db
+from app.models import DetectionRecord
 
 router = APIRouter()
 
@@ -18,7 +22,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 model = YOLO("yolo11n.pt")
 
 @router.post("/upload")
-async def upload_image(image: UploadFile = File(...)):
+async def upload_image(image: UploadFile = File(...),
+                       db: AsyncSession = Depends(get_db)):
     """
     Endpoint for uploading images and real-time detection using YOLOv11
     """
@@ -63,9 +68,20 @@ async def upload_image(image: UploadFile = File(...)):
             "bbox": [round(c, 1) for c in coords]
         })
 
+    # Saving result in Database
+    new_record = DetectionRecord(
+        filename = image.filename,
+        result_json = real_detections
+    )
+
+    db.add(new_record)
+    await db.commit()
+    await db.refresh(new_record)
+
     # 5. Return API
     return {
         "status": "success",
+        "detection_id": new_record.id,
         "original_filename": image.filename,
         "path": str(file_path),
         "detections": real_detections,
