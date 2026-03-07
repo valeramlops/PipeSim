@@ -4,6 +4,8 @@ import uuid
 from pathlib import Path
 from ultralytics import YOLO
 import cv2
+from typing import List
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
@@ -17,93 +19,119 @@ UPLOAD_DIR = Path("uploads/images")
 # Automation create folder if not exists
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Model init (nano for quick start on CPU)
-# Model is loaded once on server start
 model = YOLO("yolo11n.pt")
 
+logger = logging.getLogger("uvicorn.error")
+
 # Function to save record in database
-async def save_to_db_background(record_id: str, filename: str, detections: list):
+async def save_to_db_background(records: list):
     """
-    Open independent session and write in database
-    It is executed outside the main API response thread
+    Accepts an array of dictionaries and writes them to the database in one transaction
     """
-    async with async_session() as db:
-        new_record = DetectionRecord(
-            id = record_id,
-            filename = filename,
-            result_json = detections
-        )
-        db.add(new_record)
-        await db.commit()
+    logger.info(f"[BACKGROUND] Start saving batch. Records count: {len(records)}")
+    try:
+        async with async_session() as db:
+            db_records = [
+                DetectionRecord(
+                    id=rec["id"],
+                    filename=rec["filename"],
+                    result_json=rec["detections"]
+                ) for rec in records
+            ]
+            db.add_all(db_records)
+            await db.commit()
+            logger.info("[BACKGROUND] Batch successfully saved in PostgreSQL!")
+    except Exception as e:
+        logger.error(f"[BACKGROUND CRASH] Critical error: {e}")
 
 @router.post("/upload")
-async def upload_image(background_tasks: BackgroundTasks,
-                       image: UploadFile = File(...)):
+async def upload_image(
+        background_tasks: BackgroundTasks,
+        files: List[UploadFile] = File(...)
+    ):
     """
     Endpoint for uploading images and real-time detection using YOLOv11
     """
     # 1. Security: check file format
     valid_extensions = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
-    is_image_mime = image.content_type.startswith("image/")
-    is_valid_ext = image.filename.lower().endswith(valid_extensions)
-    if not (is_image_mime or is_valid_ext):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file type. MIME: {image.content_type}"
-        )
-    
-    # 2. Generating unique filename
-    unique_filename = f"{uuid.uuid4()}_{image.filename}"
-    file_path = UPLOAD_DIR / unique_filename
 
-    # 3. Safe file on disk
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(image.file, buffer)
+    saved_files_info = []
+    db_records_to_save = []
+    response_data = []
 
-    # 4. Run through the AI
-    # conf=0.25 discards garbage predictions (we only keep what the AI confidence is 25%+)
-    results = model(str(file_path), conf=0.25)
+    # 2. Generating unique filename and safe on disk
+    for file in files:
+        if not (file.content_type.startswith("image/")
+                or file.filename.lower().endswith(valid_extensions)):
+            continue
 
-    # Getting results
-    real_detections = []
+        detection_id = str(uuid.uuid4())
+        unique_filename = f"{detection_id}_{file.filename}"
+        file_path = UPLOAD_DIR / unique_filename
 
-    # YOLO can process batches (pack) of images, so it returns a list.
-    # We passed a single image, so we take the result from the results
-    result = results[0]
-    for box in result.boxes:
-        # Get data from PyTorch tensors
-        coords = box.xyxy[0].tolist() # [x_min, y_min, x_max, y_max]
-        conf = float(box.conf[0]) # Confidence
-        class_id = int(box.cls[0]) # Internal class ID (for example: 0)
-        class_name = model.names[class_id] # Converting id into text
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-        real_detections.append({
-            "class": class_name,
-            "confidence": round(conf, 2),
-            "bbox": [round(c, 1) for c in coords]
+        saved_files_info.append({
+            "id": detection_id,
+            "filename": file.filename,
+            "path": str(file_path)
         })
 
-    # ------ BackgroundTasks logic ------
-    # Generating UUID right there to give it to the user immediatlely
-    detection_id = str(uuid.uuid4()) 
+    if not saved_files_info:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid images uploaded in the batch"
+        )
 
-    # Send the task to the background
-    # The API will not wait for this function complete
+    # YOLO Batch Inference
+    path_for_yolo = [item["path"] for item in saved_files_info]
+
+    # 3. Run through the AI
+    results = model(path_for_yolo, conf=0.25)
+
+    # Getting results
+    for i, result in enumerate(results):
+        real_detections = []
+        for box in result.boxes:
+            # Get data from PyTorch tensors
+            coords = box.xyxy[0].tolist() # [x_min, y_min, x_max, y_max]
+            conf = float(box.conf[0]) # Confidence
+            class_id = int(box.cls[0]) # Internal class ID (for example: 0)
+            class_name = model.names[class_id] # Converting id into text
+
+            real_detections.append({
+                "class": class_name,
+                "confidence": round(conf, 2),
+                "bbox": [round(c, 1) for c in coords]
+            })
+        file_info = saved_files_info[i]
+
+        # Prepare data for json-answer to user
+        response_data.append({
+            "detection_id": file_info["id"],
+            "original_filename": file_info["filename"],
+            "detections": real_detections
+        })
+
+        # Filling the array for background recording in the database
+        db_records_to_save.append({
+            "id": file_info["id"],
+            "filename": file_info["filename"],
+            "detections": real_detections 
+        })
+
+    # 4. Send the entire batch to the database with a single background task
     background_tasks.add_task(
         save_to_db_background,
-        record_id = detection_id,
-        filename = image.filename,
-        detections = real_detections
+        records=db_records_to_save
     )
-
-    # 5. Return API
+    
     return {
         "status": "success",
-        "detection_id": detection_id,
-        "original_filename": image.filename,
-        "path": str(file_path),
-        "detections": real_detections,
-        "message": "Image processed. DB save running in background"
+        "processed_count": len(response_data),
+        "results": response_data,
+        "message": f"Successfully processed {len(response_data)} images. DB save running in background"
     }
 
 @router.post("/debug-draw")
