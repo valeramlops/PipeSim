@@ -15,13 +15,37 @@ router = APIRouter()
 
 # Create folder path
 UPLOAD_DIR = Path("uploads/images")
+UPLOAD_VIDEO_DIR = Path("uploads/videos")
 
 # Automation create folder if not exists
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 model = YOLO("yolo11n.pt")
 
 logger = logging.getLogger("uvicorn.error")
+
+# Work logic with video (OpenCV)
+def frame_generator(video_path: str):
+    """
+    Lazy iterator. Reads a video frame by frame without loading the entire video into RAM
+    """
+    cap = cv2.VideoCapture(video_path)
+
+    if not cap.isOpened():
+        raise ValueError(f"Failed to open videofile: {video_path}")
+    
+    frame_idx = 0
+    try:
+        while True:
+            ret, frame = cap.read() # Read only one file
+            if not ret:
+                break # ret == False means that the video has ended
+
+            yield frame_idx, frame # Send frame and "freeze" function
+            frame_idx += 1
+    finally:
+        cap.release() # Make sure to release the resource (close the pipe)
 
 # Function to save record in database
 async def save_to_db_background(records: list):
@@ -132,6 +156,54 @@ async def upload_image(
         "processed_count": len(response_data),
         "results": response_data,
         "message": f"Successfully processed {len(response_data)} images. DB save running in background"
+    }
+
+@router.post("/upload_video")
+async def upload_video_endpoint(
+    file: UploadFile = File(...)
+):
+    """
+    An endpoint for video download. While just testing frame slicing 
+    """
+    valid_extrensions = (".mp4", ".avi", ".mov")
+    if not file.filename.lower().endswith(valid_extrensions):
+        raise HTTPException(
+            status_code=400,
+            detail="Supporting only .mp4, .avi, .mov"
+        )
+    
+    # 1. Security saving video on hard disk
+    video_id = str(uuid.uuid4())
+    unique_filename = f"{video_id}_{file.filename}"
+    video_path = UPLOAD_VIDEO_DIR / unique_filename
+
+    with open(video_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    logger.info(f"Video {unique_filename} successfully saved on disk")
+
+    # 2. Checking for broken files
+    frames_counted = 0
+    try:
+        # Spinnung the cycle on our generator
+        for idx, frame in frame_generator(str(video_path)):
+            frames_counted += 1
+    
+    except Exception as e:
+        logger.error(f"Error reading frames: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Video stream processing error"
+        )
+    
+    logger.info(f"Video readed. Frames count: {frames_counted}")
+
+    return {
+        "status": "success",
+        "video_id": video_id,
+        "filename": file.filename,
+        "total_frames": frames_counted,
+        "message": "Video uploaded and frames successfully verified"
     }
 
 @router.post("/debug-draw")
