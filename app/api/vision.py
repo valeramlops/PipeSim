@@ -182,28 +182,58 @@ async def upload_video_endpoint(
 
     logger.info(f"Video {unique_filename} successfully saved on disk")
 
-    # 2. Checking for broken files
+    # ------ PROCESSING ------
+
+    # Processing to create new video
+    output_filename = f"Processed_{unique_filename}"
+    output_path = UPLOAD_VIDEO_DIR / output_filename
+
+    # Getting original video params
+    cap = cv2.VideoCapture(str(video_path))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    # Initialize the video writer
+    # The mp4v codec works in most players
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+
+    # ------ PROCESSING END ------
+
+    # 2. Spinnung the cycle on our generator
     frames_counted = 0
     try:
-        # Spinnung the cycle on our generator
         for idx, frame in frame_generator(str(video_path)):
+            # Running a frame through YOLO
+            results = model(frame, conf=0.25)[0]
+
+            # Built-in YOLO method for fast box drawing on the frame
+            annotated_frame = results.plot()
+
+            # Write ready frame in new file
+            out.write(annotated_frame)
             frames_counted += 1
     
     except Exception as e:
-        logger.error(f"Error reading frames: {e}")
+        logger.error(f"Error processing video: {e}")
         raise HTTPException(
             status_code=500,
             detail="Video stream processing error"
         )
+    finally:
+        out.release()
     
-    logger.info(f"Video readed. Frames count: {frames_counted}")
+    logger.info(f"Video created. File: {output_filename}, Frames count: {frames_counted}")
 
     return {
         "status": "success",
         "video_id": video_id,
-        "filename": file.filename,
+        "original_filename": file.filename,
+        "processed_filename": output_filename,
         "total_frames": frames_counted,
-        "message": "Video uploaded and frames successfully verified"
+        "message": "Video successfully processed with YOLOv11."
     }
 
 @router.post("/debug-draw")
