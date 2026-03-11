@@ -8,7 +8,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 celery_app = Celery(
     "pipesim_worker",
     broker=REDIS_URL,
-    backend=REDIS_URL # The results of the tasks will be stored here
+    backend=REDIS_URL, # The results of the tasks will be stored here
+    include=['app.core.tasks'] # Specifying the path to the task file
 )
 
 # Settings for stable video operation

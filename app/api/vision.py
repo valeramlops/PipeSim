@@ -10,6 +10,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
 from app.models import DetectionRecord
+from app.core.tasks import process_video_task
 
 router = APIRouter()
 
@@ -182,58 +183,20 @@ async def upload_video_endpoint(
 
     logger.info(f"Video {unique_filename} successfully saved on disk")
 
-    # ------ PROCESSING ------
-
-    # Processing to create new video
+    # 1.1 Defining output path for the worker
     output_filename = f"Processed_{unique_filename}"
     output_path = UPLOAD_VIDEO_DIR / output_filename
 
-    # Getting original video params
-    cap = cv2.VideoCapture(str(video_path))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
+    # 2. Send task to Celery
+    # .delay() method put task into Redis and instantly return control
+    task = process_video_task.delay(str(video_path), str(output_path))
 
-    # Initialize the video writer
-    # The mp4v codec works in most players
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-
-    # ------ PROCESSING END ------
-
-    # 2. Spinnung the cycle on our generator
-    frames_counted = 0
-    try:
-        for idx, frame in frame_generator(str(video_path)):
-            # Running a frame through YOLO
-            results = model(frame, conf=0.25)[0]
-
-            # Built-in YOLO method for fast box drawing on the frame
-            annotated_frame = results.plot()
-
-            # Write ready frame in new file
-            out.write(annotated_frame)
-            frames_counted += 1
-    
-    except Exception as e:
-        logger.error(f"Error processing video: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Video stream processing error"
-        )
-    finally:
-        out.release()
-    
-    logger.info(f"Video created. File: {output_filename}, Frames count: {frames_counted}")
-
+    # 3. Instantly responding to the user
     return {
-        "status": "success",
+        "status": "processing",
         "video_id": video_id,
-        "original_filename": file.filename,
-        "processed_filename": output_filename,
-        "total_frames": frames_counted,
-        "message": "Video successfully processed with YOLOv11."
+        "task_id": task.id,
+        "message": "Video successfully saved. Processing started in the background"
     }
 
 @router.post("/debug-draw")
