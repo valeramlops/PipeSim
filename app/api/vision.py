@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
 from app.models import DetectionRecord
 from app.core.tasks import process_video_task
+from app.core.celery_app import celery_app
+from celery.result import AsyncResult
 
 router = APIRouter()
 
@@ -243,3 +245,28 @@ async def debug_draw_image(image: UploadFile = File(...)):
         content=encoded_image.tobytes(),
         media_type="image/jpeg"
     )
+
+@router.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    """
+    An endpoint for Celery background tasks status checking 
+    """
+
+    # Searching for a task in Redis by its ID
+    task_result = AsyncResult(task_id, app=celery_app)
+
+    # Forming basic answer
+    response = {
+        "task_id": task_id,
+        "task_status": task_result.status,
+    }
+
+    # If task successfylly over, adding her results
+    if task_result.status == "SUCCESS":
+        response["result"] = task_result.result
+
+    # If task fallen with error, deduce the reason
+    elif task_result.status == "FAILURE":
+        response["error"] = str(task_result.info)
+
+    return response
