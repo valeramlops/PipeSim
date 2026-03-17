@@ -259,10 +259,16 @@ async def get_task_status(task_id: str):
     response = {
         "task_id": task_id,
         "task_status": task_result.status,
+        "progress": 0
     }
+
+    # If task in progress, get percents from meta dict
+    if task_result.status == "PROGRESS":
+        response["progress"] = task_result.info.get("percent", 0)
 
     # If task successfylly over, adding her results
     if task_result.status == "SUCCESS":
+        response["progress"] = 100
         response["result"] = task_result.result
 
     # If task fallen with error, deduce the reason
