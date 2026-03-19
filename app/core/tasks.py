@@ -8,6 +8,15 @@ logger = logging.getLogger(__name__)
 # Loading the weights globally once when the worker starts
 model = YOLO("yolo11n.pt")
 
+# Auto-retry parameter into decorator
+@celery_app.task(
+    bind=True,
+    name="process_video_task",
+    autoretry_for=(Exception,), # Catch all errors
+    retry_kwargs={"max_retries": 3}, # 3 attempts
+    retry_backoff=True # Pause between attempts will grow
+)
+
 @celery_app.task(bind=True, name="process_video_task")
 def process_video_task(self, input_path: str, output_path: str):
     logger.info(f"Starting video processing: {input_path}")
@@ -15,11 +24,8 @@ def process_video_task(self, input_path: str, output_path: str):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         logger.error(f"Failde to open video: {input_path}")
-        return {
-            "status": "error",
-            "error": "Cannot open video file"
-        }
-    
+        raise FileNotFoundError(f"Cannot open video file: {input_path}")
+
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -66,11 +72,8 @@ def process_video_task(self, input_path: str, output_path: str):
                 logger.info(f"Processed: {frames_counted} frames...")
             
     except Exception as e:
-        logger.error(f"Rendering fail: {e}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        logger.error(f"Rendering fail: {e}. Worker will retry!")
+        raise e
     
     finally:
         cap.release()
