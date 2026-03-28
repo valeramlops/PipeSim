@@ -1,3 +1,7 @@
+import asyncio
+from sqlalchemy import update
+from app.database import async_session
+from app.models import VideoRecord
 import cv2
 import logging
 from ultralytics import YOLO
@@ -20,6 +24,21 @@ model = YOLO("yolo11n.pt")
 @celery_app.task(bind=True, name="process_video_task")
 def process_video_task(self, input_path: str, output_path: str):
     logger.info(f"Starting video processing: {input_path}")
+
+    # Universal db update func
+    async def update_db_status(new_status: str, path: str = None):
+        try:
+            async with async_session() as db:
+                stmt = (
+                    update(VideoRecord)
+                    .where(VideoRecord.id == self.request.id)
+                    .values(status=new_status, result_path=path)
+                )
+                await db.execute(stmt)
+                await db.commit()
+                logger.info(f"DB status for {self.request.id} updated to {new_status}")
+        except Exception as db_err:
+            logger.error(f"Failed to update DB for {self.request.id}: {db_err}")
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -70,16 +89,30 @@ def process_video_task(self, input_path: str, output_path: str):
             # Logging process each 100 frames
             if frames_counted % 100 == 0:
                 logger.info(f"Processed: {frames_counted} frames...")
-            
+
+        # If loop ended without error -> Success
+        asyncio.run(update_db_status(
+            new_status="completed",
+            path=str(output_path)
+        ))
+
     except Exception as e:
         logger.error(f"Rendering fail: {e}. Worker will retry!")
+        # Checking worker retries
+        if self.request.retries >= self.max_retries:
+            logger.error(f"Task {self.request.id} failed definitively after {self.max_retries} retries")
+            # Adding failed status to DB
+            asyncio.run(
+                update_db_status(new_status="failed")
+            )
+        # Send error forward so that Celery can retry
         raise e
     
     finally:
         cap.release()
         out.release()
         logger.info(f"Video saved: {output_path}. Frames: {frames_counted}")
-    
+
     return {
         "status": "success",
         "output_path": str(output_path),

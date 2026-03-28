@@ -10,3 +10,12 @@ class DetectionRecord(Base):
     filename = Column(String, nullable=False)
     result_json = Column(JSON, nullable=False) # Here is bbox, class and conf
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class VideoRecord(Base):
+    __tablename__ = "video_records"
+
+    id = Column(String, primary_key=True) # This is task.id form Celery
+    filename = Column(String,nullable=False) # Source file name
+    result_path = Column(String, nullable=True) # File path
+    status = Column(String, default="processing") # Statuses
+    created_at = Column(DateTime, default=datetime.utcnow)
