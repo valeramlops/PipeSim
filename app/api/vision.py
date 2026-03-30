@@ -8,6 +8,7 @@ from typing import List
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.database import get_db, async_session
 from app.models import DetectionRecord, VideoRecord
 from app.core.tasks import process_video_task
@@ -17,11 +18,12 @@ from celery.result import AsyncResult
 router = APIRouter()
 
 # Create folder path
-UPLOAD_DIR = Path("uploads/images")
-UPLOAD_VIDEO_DIR = Path("uploads/videos")
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+UPLOAD_VIDEO_DIR = BASE_DIR / "uploads" / "videos"
+
+print(f"DEBUG: Static files directory is {UPLOAD_VIDEO_DIR}")
 
 # Automation create folder if not exists
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 model = YOLO("yolo11n.pt")
@@ -94,7 +96,7 @@ async def upload_image(
 
         detection_id = str(uuid.uuid4())
         unique_filename = f"{detection_id}_{file.filename}"
-        file_path = UPLOAD_DIR / unique_filename
+        file_path = UPLOAD_VIDEO_DIR / unique_filename
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -216,6 +218,7 @@ async def upload_video_endpoint(
 
 @router.post("/debug-draw")
 async def debug_draw_image(image: UploadFile = File(...)):
+    
     """
     Return image with drawed borders
     """
@@ -230,7 +233,7 @@ async def debug_draw_image(image: UploadFile = File(...)):
     
     # 1. Safe file on disk
     unique_filename = f"{uuid.uuid4()}_{image.filename}"
-    file_path = UPLOAD_DIR / unique_filename
+    file_path = UPLOAD_VIDEO_DIR / unique_filename
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(image.file, buffer)
@@ -289,3 +292,34 @@ async def get_task_status(task_id: str):
         response["error"] = str(task_result.info)
 
     return response
+
+@router.get("/history")
+async def get_video_history():
+    """
+    Return video history from PostgreSQL
+    """
+    try:
+        async with async_session() as db:
+            stmt = select(VideoRecord).order_by(VideoRecord.created_at.desc())
+            result = await db.execute(stmt)
+            records = result.scalars().all()
+
+            return {
+                "status": "success",
+                "count": len(records),
+                "history": [
+                    {
+                        "task_id": r.id,
+                        "filename": r.filename,
+                        "status": r.status,
+                        "result_url": f"/static/videos/{Path(r.result_path).name}" if r.result_path else None,
+                        "created_at": r.created_at
+                    } for r in records
+                ]
+            }
+    except Exception as e:
+        logger.error(f"History error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Database error"
+        )
