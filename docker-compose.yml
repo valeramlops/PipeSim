@@ -50,6 +50,17 @@ services:
       - db
       - redis
     
+  frontend:
+    build:
+      context: ./frontend
+    container_name: pipesim_frontend
+    ports:
+      - "8501:8501" # Port for access from browser
+    depends_on:
+      - api # Starting front only after start API
+    environment:
+      - BACKEND_URL=http://api:8000
+
 # Save database settings on hard disk, so that they don't disappear when restarting
 volumes:
   postgres_data:
