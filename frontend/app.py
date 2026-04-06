@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import time
 
 # Accessing the backend by service name in Docker (api)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
@@ -17,7 +18,7 @@ with st.sidebar:
     st.title("System Status")
     st.write("---")
     try:
-        # Fust backend ping for indicator
+        # Fast backend ping for indicator
         res = requests.get(f"{BACKEND_URL}/", timeout=2)
         if res.status_code == 200:
             st.success("API: Connected")
@@ -58,17 +59,56 @@ if uploaded_file is not None:
                 # 3. Answer processing
                 if response.status_code == 200:
                     data = response.json()
-                    st.success("Video successfully uploaded on server and sended to worker")
+                    task_id = data.get("task_id")
+                    st.success("Video in queue. Monitoring...")
 
-                    # Return task ID
-                    col1, col2 = st.columns(2)
-                    col1.metric("Task ID (Celery)", data.get("task_id", "N/A"))
-                    col2.metric("Video ID (DB)", data.get("video_id", "N/A"))
+                    st.write("### Processing status")
+
+                    # Empty containers for interface updating (Polling)
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+
+                    # Status check every 2 seconds loop
+                    while True:
+                        task_res = requests.get(f"{BACKEND_URL}/api/vision/task/{task_id}").json()
+                        status = task_res.get("task_status")
+                        progress = task_res.get("progress", 0)
+
+                        if status == "PENDING":
+                            status_text.warning("Task in queue. Waiting for worker...")
+
+                        elif status == "PROGRESS":
+                            progress_bar.progress(int(progress))
+                            status_text.info(f"Frame detection: {int(progress)}%")
+
+                        elif status == "SUCCESS":
+                            progress_bar.progress(100)
+                            status_text.success("Processing is over")
+
+                            # Parsing filename and collecting url for download
+                            result_path = task_res.get("result")
+                            filename = os.path.basename(result_path)
+                            video_url = f"{BACKEND_URL}/static/videos/{filename}"
+
+                            st.write("### Results")
+
+                            # Loading video bytes in Docker-net
+                            video_bytes = requests.get(video_url).content
+                            st.video(video_bytes) # Rendering player
+
+                            break # Loop end
+                    
+                        elif status == "FAILURE":
+                            status_text.error(f"Worker error: {task_res.get('error')}")
+                            break
+                            
+                        # Pause
+                        time.sleep(2)
 
                 else:
                     # If backend return 400 or 422 (validation error)
                     st.error(f"Server rejected file. Code: {response.status_code}")
-                    st.json(response.json()) # Showing gray error for debagging
+                    st.json(response.json()) # Showing gray error for debugging
             
             except Exception as e:
                 # If network is down (timeout or Docker dump)

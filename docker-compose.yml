@@ -60,6 +60,8 @@ services:
       - api # Starting front only after start API
     environment:
       - BACKEND_URL=http://api:8000
+    volumes:
+      - ./frontend:/app
 
 # Save database settings on hard disk, so that they don't disappear when restarting
 volumes:
