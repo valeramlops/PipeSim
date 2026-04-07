@@ -4,6 +4,8 @@ from app.database import async_session
 from app.models import VideoRecord
 import cv2
 import logging
+import subprocess
+from pathlib import Path
 from ultralytics import YOLO
 from app.core.celery_app import celery_app
 
@@ -53,8 +55,9 @@ def process_video_task(self, input_path: str, output_path: str):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Initializing the oven (VideoWriter) with the correct syntax
-    fourcc = cv2.VideoWriter.fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    temp_output = str(output_path).replace(".mp4", "_temp.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
 
     frames_counted = 0
 
@@ -90,7 +93,25 @@ def process_video_task(self, input_path: str, output_path: str):
             if frames_counted % 100 == 0:
                 logger.info(f"Processed: {frames_counted} frames...")
 
-        # If loop ended without error -> Success
+        # LOOP HAS ENDED, THE FRAMES HAVE ENDED
+
+        # IMPORTANT: First, close the OpenCV files so that they are saved to disk
+        cap.release()
+        out.release()
+
+        # FFmpeg:
+        logger.info("Starting FFmpeg conversion to H.264...")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", temp_output,
+            "-vcodec", "libx264",
+            "-f", "mp4", output_path
+        ], check=True)
+
+        # Delete temp file
+        Path(temp_output).unlink(missing_ok=True)
+        
+        # Updating DB status -> completed
         asyncio.run(update_db_status(
             new_status="completed",
             path=str(output_path)
@@ -98,6 +119,11 @@ def process_video_task(self, input_path: str, output_path: str):
 
     except Exception as e:
         logger.error(f"Rendering fail: {e}. Worker will retry!")
+
+        # Freeing resources on error if they are still open
+        if 'cap' in locals() and cap.isOpened(): cap.release()
+        if 'out' in locals(): out.release()
+
         # Checking worker retries
         if self.request.retries >= self.max_retries:
             logger.error(f"Task {self.request.id} failed definitively after {self.max_retries} retries")
@@ -108,11 +134,6 @@ def process_video_task(self, input_path: str, output_path: str):
         # Send error forward so that Celery can retry
         raise e
     
-    finally:
-        cap.release()
-        out.release()
-        logger.info(f"Video saved: {output_path}. Frames: {frames_counted}")
-
     return {
         "status": "success",
         "output_path": str(output_path),

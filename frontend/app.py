@@ -27,89 +27,147 @@ with st.sidebar:
     except:
         st.error("API: There is no connection")
 
-# Main page
+# Main page header
 st.title("PipeSim: Computer Vision")
 st.write("Load video for object detection. Video will be sent to the Celery queue for asynchronous YOLOv11 processing")
 st.divider()
 
-# File upload widget with format restrictions
-uploaded_file = st.file_uploader("Choose videofile", type=["mp4", "avi", "mov"])
+# TABS
+tab1, tab2 = st.tabs(["New Detection", "History"])
 
-if uploaded_file is not None:
-    # Calculating file size for beauty of the display
-    file_size_mb = round(uploaded_file.size / (1024 * 1024), 2)
-    st.info(f"File ready: **{uploaded_file.name}** ({file_size_mb} MB)")
+# TAB1: Main page
+with tab1:
+    # File upload widget with format restrictions
+    uploaded_file = st.file_uploader("Choose videofile", type=["mp4", "avi", "mov"])
+    if uploaded_file is not None:
+        # Calculating file size for beauty of the display
+        file_size_mb = round(uploaded_file.size / (1024 * 1024), 2)
+        st.info(f"File ready: **{uploaded_file.name}** ({file_size_mb} MB)")
 
-    # Send to backend button
-    if st.button("Send to processing", type="primary", use_container_width=True):
+        # Send to backend button
+        if st.button("Send to processing", type="primary", use_container_width=True):
 
-        # Spinner spins while we wait for a response from FastAPI
-        with st.spinner("Sending file to backend..."):
-            try:
-                # 1. Pack the file in a format that FastAPI understands (UploadFile)
-                # Tuple structure: (fle_name, binary_data, MIME_type)
-                files = {
-                    "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
-                }
+            # Spinner spins while we wait for a response from FastAPI
+            with st.spinner("Sending file to backend..."):
+                try:
+                    # 1. Pack the file in a format that FastAPI understands (UploadFile)
+                    # Tuple structure: (fle_name, binary_data, MIME_type)
+                    files = {
+                        "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
+                    }
 
-                # 2. Send POST request to ready endpoint
-                upload_endpoint = f"{BACKEND_URL}/api/vision/upload_video"
-                response = requests.post(upload_endpoint, files=files)
+                    # 2. Send POST request to ready endpoint
+                    upload_endpoint = f"{BACKEND_URL}/api/vision/upload_video"
+                    response = requests.post(upload_endpoint, files=files)
 
-                # 3. Answer processing
-                if response.status_code == 200:
-                    data = response.json()
-                    task_id = data.get("task_id")
-                    st.success("Video in queue. Monitoring...")
+                    # 3. Answer processing
+                    if response.status_code == 200:
+                        data = response.json()
+                        task_id = data.get("task_id")
+                        st.success("Video in queue. Monitoring...")
 
-                    st.write("### Processing status")
+                        st.write("### Processing status")
 
-                    # Empty containers for interface updating (Polling)
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
+                        # Empty containers for interface updating (Polling)
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
 
-                    # Status check every 2 seconds loop
-                    while True:
-                        task_res = requests.get(f"{BACKEND_URL}/api/vision/task/{task_id}").json()
-                        status = task_res.get("task_status")
-                        progress = task_res.get("progress", 0)
+                        # Status check every 2 seconds loop
+                        while True:
+                            task_res = requests.get(f"{BACKEND_URL}/api/vision/task/{task_id}").json()
+                            status = task_res.get("task_status")
+                            progress = task_res.get("progress", 0)
 
-                        if status == "PENDING":
-                            status_text.warning("Task in queue. Waiting for worker...")
+                            if status == "PENDING":
+                                status_text.warning("Task in queue. Waiting for worker...")
 
-                        elif status == "PROGRESS":
-                            progress_bar.progress(int(progress))
-                            status_text.info(f"Frame detection: {int(progress)}%")
+                            elif status == "PROGRESS":
+                                progress_bar.progress(int(progress))
+                                status_text.info(f"Frame detection: {int(progress)}%")
 
-                        elif status == "SUCCESS":
-                            progress_bar.progress(100)
-                            status_text.success("Processing is over")
+                            elif status == "SUCCESS":
+                                progress_bar.progress(100)
+                                status_text.success("Processing is over")
 
-                            # Parsing filename and collecting url for download
-                            result_path = task_res.get("result")
-                            filename = os.path.basename(result_path)
-                            video_url = f"{BACKEND_URL}/static/videos/{filename}"
+                                # Parsing filename and collecting url for download
+                                raw_result = task_res.get("result")
+                                # If worker return dict, getting path by key
+                                if isinstance(raw_result, dict):
+                                    result_path = raw_result.get("output_path", "")
+                                else:
+                                    result_path = str(raw_result)
+                                filename = os.path.basename(result_path)
+                                video_url = f"{BACKEND_URL}/static/videos/{filename}"
 
-                            st.write("### Results")
+                                st.write("### Results")
 
-                            # Loading video bytes in Docker-net
-                            video_bytes = requests.get(video_url).content
-                            st.video(video_bytes) # Rendering player
+                                # Loading video bytes in Docker-net
+                                video_bytes = requests.get(video_url).content
+                                st.video(video_bytes) # Rendering player
 
-                            break # Loop end
-                    
-                        elif status == "FAILURE":
-                            status_text.error(f"Worker error: {task_res.get('error')}")
-                            break
-                            
-                        # Pause
-                        time.sleep(2)
+                                break # Loop end
+                        
+                            elif status == "FAILURE":
+                                status_text.error(f"Worker error: {task_res.get('error')}")
+                                break
+                                
+                            # Pause
+                            time.sleep(2)
 
-                else:
-                    # If backend return 400 or 422 (validation error)
-                    st.error(f"Server rejected file. Code: {response.status_code}")
-                    st.json(response.json()) # Showing gray error for debugging
-            
-            except Exception as e:
-                # If network is down (timeout or Docker dump)
-                st.error(f"Internal network error: {e}")
+                    else:
+                        # If backend return 400 or 422 (validation error)
+                        st.error(f"Server rejected file. Code: {response.status_code}")
+                        st.json(response.json()) # Showing gray error for debugging
+                
+                except Exception as e:
+                    # If network is down (timeout or Docker dump)
+                    st.error(f"Internal network error: {e}")
+
+# TAB2: Database History
+with tab2:
+    st.header("Database History")
+
+    if st.button("Refresh History"):
+        pass
+
+    try:
+        hist_res = requests.get(f"{BACKEND_URL}/api/vision/history", timeout=5)
+
+        if hist_res.status_code == 200:
+            history_data = hist_res.json().get("history", [])
+            count = hist_res.json().get("count", 0)
+
+            st.write(f"Total records found: {count}")
+
+            if not history_data:
+                st.info("The history is currently empty. Process a video first")
+            else:
+                for record in history_data:
+                    db_status = record.get('status', '').lower()
+                    # Setting icons based on status
+                    if db_status in ["success", "completed"]:
+                        status_icon = "✅"
+                    elif db_status in ["processing", "pending", "progress"]:
+                        status_icon = "⏳"
+                    else:
+                        status_icon = "❌"
+
+                    # Expander for each video
+                    with st.expander(f"{status_icon} {record['filename']} ({record['status'].upper()})"):
+                        st.write(f"Task ID: {record['task_id']}")
+                        st.write(f"Date: {record['created_at']}")
+
+                        if db_status in ["success", "completed"] and record.get('result_url'):
+                            full_url = f"{BACKEND_URL}{record['result_url']}"
+                            st.write("---")
+                            st.write("Processed Video:")
+                            try:
+                                hist_video_bytes = requests.get(full_url).content
+                                st.video(hist_video_bytes)
+                            except:
+                                st.error("Failed to load video from server")
+        else:
+            st.error(f"Failed to fetch history. Server returned code: {hist_res.status_code}")
+    
+    except Exception as e:
+        st.error(f"Network error while fetching history: {e}")
