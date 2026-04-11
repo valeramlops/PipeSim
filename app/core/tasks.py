@@ -67,7 +67,7 @@ def process_video_task(self, input_path: str, output_path: str):
             if not ret:
                 break
 
-            results = model(frame, conf=0.25)[0]
+            results = model(frame, conf=0.25, device=0)[0]
             annotated_frame = results.plot()
 
             out.write(annotated_frame)

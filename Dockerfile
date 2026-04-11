@@ -9,16 +9,24 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # install system dependencies for OpenCV and YOLO
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     ffmpeg \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# install uv
+RUN pip install uv
+
+RUN uv pip install --system torch torchvision \
+    --index-url https://download.pytorch.org/whl/cu121 \
+    --extra-index-url https://pypi.org/simple \
+    --index-strategy unsafe-best-match
 
 # Copy list of libraries and installing them
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    --index-url https://download.pytorch.org/whl/cpu \
+RUN uv pip install --system --no-cache -r requirements.txt \
     --extra-index-url https://pypi.org/simple
 
 # Copy all other code for project container
