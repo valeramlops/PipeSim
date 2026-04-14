@@ -2,6 +2,8 @@ import streamlit as st
 import requests
 import os
 import time
+import pandas as pd
+import numpy as np
 
 # Accessing the backend by service name in Docker (api)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
@@ -12,6 +14,12 @@ st.set_page_config(
     page_icon="🚀",
     layout="wide"
 )
+
+# This ensures that the hist_res variable is available everywhere
+try:
+    hist_res = requests.get(f"{BACKEND_URL}/api/vision/history", timeout=5)
+except Exception as e:
+    hist_res = None
 
 # SideBar
 with st.sidebar:
@@ -29,16 +37,23 @@ with st.sidebar:
 
 # Main page header
 st.title("PipeSim: Computer Vision")
-st.write("Load video for object detection. Video will be sent to the Celery queue for asynchronous YOLOv11 processing")
+st.write("Professional object detection system based on YOLOv11 and GPU acceleration")
 st.divider()
 
 # TABS
-tab1, tab2 = st.tabs(["New Detection", "History"])
+tab_photo, tab_video, tab_stats = st.tabs(["Photo", "Video", "Statistics and history"])
 
-# TAB1: Main page
-with tab1:
+# TAB 1: PHOTO
+with tab_photo:
+    st.header("Image Detection")
+    st.info("This will implement direct (synchronous) photo processing via FastAPI")
+
+# TAB1: Video page
+with tab_video:
+    st.header("Stream analysis (Celery + GPU)")
     # File upload widget with format restrictions
     uploaded_file = st.file_uploader("Choose videofile", type=["mp4", "avi", "mov"])
+    
     if uploaded_file is not None:
         # Calculating file size for beauty of the display
         file_size_mb = round(uploaded_file.size / (1024 * 1024), 2)
@@ -123,51 +138,79 @@ with tab1:
                     # If network is down (timeout or Docker dump)
                     st.error(f"Internal network error: {e}")
 
-# TAB2: Database History
-with tab2:
-    st.header("Database History")
+# TAB 3: Statistic and History
+with tab_stats:
+    st.header("System analysis")
 
-    if st.button("Refresh History"):
-        pass
-
+    # 1. Dashboard (Statistic)
     try:
         hist_res = requests.get(f"{BACKEND_URL}/api/vision/history", timeout=5)
+        count = hist_res.json().get("count", 0) if hist_res.status_code == 200 else 0
+    except:
+        count = 0
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total processed", count, "Database (PostgreSQL)")
+    col2.metric("Acceleration of inference", "CUDA", "GPU Active")
+    col3.metric("Worker status", "Online", "Celery", delta_color="normal")
 
+    # A stub for future metrics from Block 7
+    st.caption("GPU load (Simulation before Prometheus/Grafana implementation)")
+    chart_data = pd.DataFrame(np.random.randn(20, 1) * 10 + 50, columns=["Disposal GPU (%)"])
+    st.line_chart(chart_data)
+    st.divider()
+
+    # 2. History log
+    st.subheader("Operation history")
+    if st.button("Refresh Database history"):
+        st.rerun()
+    
+    # Trying process data from DB (if request to API successfully done)
+    try:
         if hist_res.status_code == 200:
+            # Pulling a list of records from JSON, if there is no key, return an empty list []
             history_data = hist_res.json().get("history", [])
-            count = hist_res.json().get("count", 0)
 
-            st.write(f"Total records found: {count}")
-
+            # If in database 0 records - return blue message (info)
             if not history_data:
-                st.info("The history is currently empty. Process a video first")
+                st.info("History is empty. Process first video")
             else:
+                # Iterating over each record from the database to display it in the interface
                 for record in history_data:
+                    # Lowercase the status to avoid comparison errors (Success vs success)
                     db_status = record.get('status', '').lower()
-                    # Setting icons based on status
+
+                    # Icon choise logic: completed, processing or dump with error
                     if db_status in ["success", "completed"]:
                         status_icon = "✅"
                     elif db_status in ["processing", "pending", "progress"]:
                         status_icon = "⏳"
                     else:
                         status_icon = "❌"
-
-                    # Expander for each video
+                    # Creating expander. In header - filename and status
                     with st.expander(f"{status_icon} {record['filename']} ({record['status'].upper()})"):
                         st.write(f"Task ID: {record['task_id']}")
-                        st.write(f"Date: {record['created_at']}")
+                        st.write(f"Data: {record['created_at']}")
 
+                        # If video successfully processed and result path is exist in DB - trying to show player
                         if db_status in ["success", "completed"] and record.get('result_url'):
+                            # Forming full link on static file through backend proxy-URL
                             full_url = f"{BACKEND_URL}{record['result_url']}"
                             st.write("---")
-                            st.write("Processed Video:")
+
                             try:
-                                hist_video_bytes = requests.get(full_url).content
-                                st.video(hist_video_bytes)
+                                if st.button(f"Load Video", key=f"btn_{record['task_id']}"):
+                                    # IMPORTANT: uploading vide bytes directly from API container
+                                    hist_video_bytes = requests.get(full_url).content
+                                    # Standart Streamlit player with this video
+                                    st.video(hist_video_bytes)
                             except:
-                                st.error("Failed to load video from server")
+                                # If file deleted from disk or server did not return the bytes
+                                st.error("Failed to upload video from server")
         else:
-            st.error(f"Failed to fetch history. Server returned code: {hist_res.status_code}")
-    
+            # If backend return 404, 500 or other error
+            st.error(f"History request error: {hist_res.status_code}")
+
     except Exception as e:
-        st.error(f"Network error while fetching history: {e}")
+        # If API container is turned off or the Docker network times out
+        st.error(f"Network error: {e}")
