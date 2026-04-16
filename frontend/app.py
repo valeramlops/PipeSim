@@ -56,9 +56,69 @@ with tab_photo:
     if not is_api_online:
         st.error("Function unavailable: there is no connection to the server")
     else:
-        st.info("Instantly processing photo module coming soon")
+        # Only photo loading widget
+        uploaded_img = st.file_uploader("Upload photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
-# TAB1: Video page
+        if uploaded_img:
+            # Button
+            analyze_clicked = st.button("Analyze photo", type="primary", use_container_width=True)
+
+            # Reserve a permanent place for the text
+            info_placeholder = st.empty()
+
+            # While button is not pressed, we show a nice hint (to prevent the column from being empty)
+            if not analyze_clicked:
+                info_placeholder.markdown(
+                    """
+                    <div style=
+                    "text-align: center;
+                    padding: 1rem;
+                    background-color: rgba(28, 131, 225, 0.1);
+                    color: #8cb4df;
+                    border-radius: 0.5rem;
+                    border: 1px solid rgba(28, 131, 225, 0.2);
+                    margin-bottom: 1rem;">
+                        👆 Click the button above to start detection
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                # If button is pressed, clear place, but "empty" stays in the tree
+                info_placeholder.empty()
+
+            # Divide the screen into two columns for beauty
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.subheader("Original")
+                st.image(uploaded_img, use_container_width=True)
+
+            with col2:
+                st.subheader("Result")
+
+                # Starting processing if button pressed
+                if analyze_clicked:
+                    with st.spinner("Processing in RAM..."):
+                        try:
+                            # Packing file for FastAPI
+                            files = {
+                                "file": (uploaded_img.name, uploaded_img.getvalue(), uploaded_img.type)
+                            }
+                            
+                            res = requests.post(f"{BACKEND_URL}/api/vision/predict_image", files=files)
+
+                            if res.status_code == 200:
+                                # Server return bytes of ready image, Streamlit drawing it directly
+                                st.image(res.content, use_container_width=True)
+                                st.toast("Photo successfully processed", icon='⚡')
+                            else:
+                                st.error(f"Server rejected request. Code: {res.status_code}")
+                        
+                        except Exception as e:
+                            st.error(f"Network error: {e}")
+
+# TAB 2: Video page
 with tab_video:
     st.header("Stream analysis")
 

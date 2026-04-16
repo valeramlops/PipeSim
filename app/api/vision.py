@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Response, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, Response, BackgroundTasks, Request
 import shutil
 import uuid
 from pathlib import Path
@@ -6,6 +6,7 @@ from ultralytics import YOLO
 import cv2
 from typing import List
 import logging
+import numpy as np
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -216,47 +217,49 @@ async def upload_video_endpoint(
         "message": "Video successfully saved. Processing started in the background"
     }
 
-@router.post("/debug-draw")
-async def debug_draw_image(image: UploadFile = File(...)):
-    
+@router.post("/predict_image")
+async def predict_image(file: UploadFile = File(...)):
     """
-    Return image with drawed borders
+    Synchronus image processing strictly in RAM (No disk saving)
+    Returns image with drawn bounding boxes
     """
+
     valid_extensions = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
-    is_image_mime = image.content_type.startswith("image/")
-    is_valid_ext = image.filename.lower().endswith(valid_extensions)
-    if not (is_image_mime or is_valid_ext):
+    if not file.filename.lower().endswith(valid_extensions):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. MIME: {image.content_type}"
+            detail=f"Invalid file type. Supporting only images."
+        )
+
+    # 1. Reading bytes uploaded file directly in RAM
+    contents = await file.read()
+
+    # 2. Convert bytes into OpenCV format (BGR pixel matrix)
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if img is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to decode image"
         )
     
-    # 1. Safe file on disk
-    unique_filename = f"{uuid.uuid4()}_{image.filename}"
-    file_path = UPLOAD_VIDEO_DIR / unique_filename
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(image.file, buffer)
-
-    # 2. Run through AI
-    results = model(str(file_path), conf=0.25)
+    # 3. Instant pixel matrix prediction
+    results = model(img, conf=0.25)
     result = results[0]
 
-    # 3. Visualization magic
-    # .plot() method draws all the boxes, class names, and confidence percentages
-    # it returns a pixel matrix (numpy array) in BGR format, which is understood by OpenCV
-    annotated_frame = result.plot(line_width = 5, font_size = 16)
+    # 4. Visualization: .plot() method drawing borders and classes
+    annotated_frame = result.plot(line_width=5, font_size=16)
 
-    # 4. Encoding pixel matrix in format .jpg
+    # 5. Encode back into .jpg to sending through net
     success, encoded_image = cv2.imencode(".jpg", annotated_frame)
     if not success:
         raise HTTPException(
             status_code=500,
-            detail="Failed to encode image"
+            detail="Failed to encpode image"
         )
-    
-    # 5. Return image in answer
-    # Specify media_type="image/jpeg" so that Swagger/Browser understands that this is a photo, not text
+
+    # 6. Return bytes
     return Response(
         content=encoded_image.tobytes(),
         media_type="image/jpeg"
