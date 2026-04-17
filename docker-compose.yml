@@ -62,7 +62,7 @@ services:
       context: ./frontend
     container_name: pipesim_frontend
     ports:
-      - "8501:8501" # Port for access from browser
+      - "8502:8501" # Port for access from browser
     depends_on:
       - api # Starting front only after start API
     environment:

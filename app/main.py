@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api import data, model, predict, monitor, auth, vision
 from app.core.logger import log
 from app.core.limiter import limiter
-from app.api.vision import UPLOAD_VIDEO_DIR 
+from app.api.vision import UPLOAD_VIDEO_DIR, UPLOAD_IMAGE_DIR
 from app.database import engine, Base
 import app.models # noqa: F401
 
@@ -128,6 +128,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Static & templates
 # Destribute videos from the folder where the worker saves them
 app.mount("/static/videos", StaticFiles(directory=str(UPLOAD_VIDEO_DIR)), name="videos")
+app.mount("/static/images", StaticFiles(directory=str(UPLOAD_IMAGE_DIR)), name="images")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")

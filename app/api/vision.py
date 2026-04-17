@@ -18,14 +18,14 @@ from celery.result import AsyncResult
 
 router = APIRouter()
 
-# Create folder path
+# Create folders paths
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 UPLOAD_VIDEO_DIR = BASE_DIR / "uploads" / "videos"
+UPLOAD_IMAGE_DIR = BASE_DIR / "uploads" / "images"
 
-print(f"DEBUG: Static files directory is {UPLOAD_VIDEO_DIR}")
-
-# Automation create folder if not exists
+# Automation create folders if not exists
 UPLOAD_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 model = YOLO("yolo11n.pt")
 
@@ -62,10 +62,11 @@ async def save_to_db_background(records: list):
     try:
         async with async_session() as db:
             db_records = [
-                DetectionRecord(
+                VideoRecord(
                     id=rec["id"],
                     filename=rec["filename"],
-                    result_json=rec["detections"]
+                    status="completed",
+                    result_path=rec["result_path"]
                 ) for rec in records
             ]
             db.add_all(db_records)
@@ -97,7 +98,7 @@ async def upload_image(
 
         detection_id = str(uuid.uuid4())
         unique_filename = f"{detection_id}_{file.filename}"
-        file_path = UPLOAD_VIDEO_DIR / unique_filename
+        file_path = UPLOAD_IMAGE_DIR / unique_filename
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -105,7 +106,8 @@ async def upload_image(
         saved_files_info.append({
             "id": detection_id,
             "filename": file.filename,
-            "path": str(file_path)
+            "path": str(file_path),
+            "unique_filename": unique_filename
         })
 
     if not saved_files_info:
@@ -120,27 +122,41 @@ async def upload_image(
     # 3. Run through the AI
     results = model(path_for_yolo, conf=0.25)
 
-    # Getting results
+    # Getting results and drawing
     for i, result in enumerate(results):
+        file_info = saved_files_info[i]
+
+        # Drawing
+        annotated_frame = result.plot(line_width = 3)
+
+        # Generating name for processed file
+        res_filename = f"res_{file_info['unique_filename']}"
+        res_path = UPLOAD_IMAGE_DIR / res_filename
+        
+        # Save on disk
+        cv2.imwrite(str(res_path), annotated_frame)
+
         real_detections = []
         for box in result.boxes:
-            # Get data from PyTorch tensors
-            coords = box.xyxy[0].tolist() # [x_min, y_min, x_max, y_max]
-            conf = float(box.conf[0]) # Confidence
-            class_id = int(box.cls[0]) # Internal class ID (for example: 0)
-            class_name = model.names[class_id] # Converting id into text
+            coords = box.xyxy[0].tolist()
+            conf = float(box.conf[0])
+            class_id = int(box.cls[0])
+            class_name = model.names[class_id]
 
             real_detections.append({
                 "class": class_name,
                 "confidence": round(conf, 2),
                 "bbox": [round(c, 1) for c in coords]
             })
-        file_info = saved_files_info[i]
+
+        # Create answer with link on image
+        processed_url = f"/static/images/{res_filename}"
 
         # Prepare data for json-answer to user
         response_data.append({
             "detection_id": file_info["id"],
             "original_filename": file_info["filename"],
+            "processed_url": processed_url,
             "detections": real_detections
         })
 
@@ -148,7 +164,8 @@ async def upload_image(
         db_records_to_save.append({
             "id": file_info["id"],
             "filename": file_info["filename"],
-            "detections": real_detections 
+            "detections": real_detections,
+            "result_path": str(res_path)
         })
 
     # 4. Send the entire batch to the database with a single background task
@@ -315,7 +332,10 @@ async def get_video_history():
                         "task_id": r.id,
                         "filename": r.filename,
                         "status": r.status,
-                        "result_url": f"/static/videos/{Path(r.result_path).name}" if r.result_path else None,
+                        "result_url": (
+                            f"/static/{'images' if r.filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')) else 'videos'}/{Path(r.result_path).name}"
+                            if r.result_path else None
+                        ),
                         "created_at": r.created_at
                     } for r in records
                 ]

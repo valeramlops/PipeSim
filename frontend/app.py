@@ -56,67 +56,165 @@ with tab_photo:
     if not is_api_online:
         st.error("Function unavailable: there is no connection to the server")
     else:
-        # Only photo loading widget
-        uploaded_img = st.file_uploader("Upload photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
+        # Sub tabs
+        sub_tab_instant, sub_tab_batch = st.tabs(["⚡ Instant (RAM-only)", "📦 Batch Mode (Save to DB)"])
 
-        if uploaded_img:
-            # Button
-            analyze_clicked = st.button("Analyze photo", type="primary", use_container_width=True)
-
-            # Reserve a permanent place for the text
-            info_placeholder = st.empty()
-
-            # While button is not pressed, we show a nice hint (to prevent the column from being empty)
-            if not analyze_clicked:
-                info_placeholder.markdown(
-                    """
-                    <div style=
-                    "text-align: center;
+        with sub_tab_instant:
+            st.markdown("""
+                <div style="
+                    text-align: center;
                     padding: 1rem;
                     background-color: rgba(28, 131, 225, 0.1);
                     color: #8cb4df;
                     border-radius: 0.5rem;
                     border: 1px solid rgba(28, 131, 225, 0.2);
-                    margin-bottom: 1rem;">
-                        👆 Click the button above to start detection
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-            else:
-                # If button is pressed, clear place, but "empty" stays in the tree
-                info_placeholder.empty()
+                    margin-bottom: 1rem;
+                ">
+                    📦 <b>Upload a single photo.</b> Inference will run instantly in RAM without saving to the database.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            # Mode 1: Instant
+            # Only photo loading widget
+            uploaded_img = st.file_uploader("Upload single photo (JPG/PNG)", type=["jpg", "jpeg", "png"], key="single_upload")
 
-            # Divide the screen into two columns for beauty
-            col1, col2 = st.columns(2)
+            if uploaded_img:
+                # Button
+                analyze_clicked = st.button("Analyze photo", type="primary", use_container_width=True, key="btn_single")
 
-            with col1:
-                st.subheader("Original")
-                st.image(uploaded_img, use_container_width=True)
+                # Divide the screen into two columns for beauty
+                col1, col2 = st.columns(2)
 
-            with col2:
-                st.subheader("Result")
+                with col1:
+                    st.subheader("Original")
+                    st.image(uploaded_img, use_container_width=True)
 
-                # Starting processing if button pressed
-                if analyze_clicked:
-                    with st.spinner("Processing in RAM..."):
-                        try:
-                            # Packing file for FastAPI
-                            files = {
-                                "file": (uploaded_img.name, uploaded_img.getvalue(), uploaded_img.type)
-                            }
+                with col2:
+                    st.subheader("Result")
+
+                    # Logic inside the right column:
+                    if not analyze_clicked:
+                        # Until you click, we're showing the plate
+                        st.markdown(
+                            """
+                            <div style=
+                            "text-align: center;
+                            padding: 1rem;
+                            background-color: rgba(28, 131, 225, 0.1);
+                            color: #8cb4df;
+                            border-radius: 0.5rem;
+                            border: 1px solid rgba(28, 131, 225, 0.2);
+                            margin-bottom: 1rem;">
+                                👆 Click the button above to start detection
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        with st.spinner("Processing in RAM..."):
+                            try:
+                                # Packing file for FastAPI
+                                files = {
+                                    "file": (uploaded_img.name, uploaded_img.getvalue(), uploaded_img.type)
+                                }
+                                
+                                res = requests.post(f"{BACKEND_URL}/api/vision/predict_image", files=files)
+
+                                if res.status_code == 200:
+                                    # Server return bytes of ready image, Streamlit drawing it directly
+                                    st.image(res.content, use_container_width=True)
+                                    st.toast("Photo successfully processed", icon='⚡')
+                                else:
+                                    st.error(f"Server rejected request. Code: {res.status_code}")
                             
-                            res = requests.post(f"{BACKEND_URL}/api/vision/predict_image", files=files)
+                            except Exception as e:
+                                st.error(f"Network error: {e}")
+
+        with sub_tab_batch:
+            # markdow
+            st.markdown(
+                """
+                <div style="
+                    text-align: center;
+                    padding: 1rem;
+                    background-color: rgba(28, 131, 225, 0.1);
+                    color: #8cb4df;
+                    border-radius: 0.5rem;
+                    border: 1px solid rgba(28, 131, 225, 0.2);
+                    margin-bottom: 1rem;
+                ">
+                    📦 <b>Upload multiple photos.</b> Inference will run in batch, and JSON results will be saved to PostgreSQL. 
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Accept_multiple_files=True Allows you to select many files at once
+            uploaded_imgs = st.file_uploader(
+                "Upload photos batch (JPG/PNG)",
+                type = ["jpg", "jpeg", "png"],
+                accept_multiple_files=True,
+                key="batch_upload_field"
+            )
+
+            if uploaded_imgs:
+                st.write(f"Selected files: {len(uploaded_imgs)}")
+
+                if st.button("Process Batch 📦", type="primary", use_container_width=True, key="btn_multi"):
+                    with st.spinner(f"Sending {len(uploaded_imgs)} files to backend..."):
+                        try:
+                            # Create a list of tuples with the "files" key,
+                            # as FastAPI expects the parameter files:List[UploadFile]
+                            files_payload = [
+                                ("files", (f.name, f.getvalue(), f.type)) for f in uploaded_imgs
+                            ]
+
+                            res = requests.post(f"{BACKEND_URL}/api/vision/upload", files=files_payload)
 
                             if res.status_code == 200:
-                                # Server return bytes of ready image, Streamlit drawing it directly
-                                st.image(res.content, use_container_width=True)
-                                st.toast("Photo successfully processed", icon='⚡')
+                                data = res.json()
+
+                                # Adding data in session memory
+                                st.session_state['batch_results'] = data.get("results", [])
+
+                                st.success("Batch processed!")
+                                st.toast(f"✅ {data.get('processed_count')} photos pushed to DB!", icon='📦')
+
                             else:
                                 st.error(f"Server rejected request. Code: {res.status_code}")
-                        
+                                st.json(res.json())
+
                         except Exception as e:
                             st.error(f"Network error: {e}")
+                
+                # Reading data from session
+                if 'batch_results' in st.session_state and st.session_state['batch_results']:
+                    st.divider()
+                    st.subheader("Batch Results")
+
+                    for item in st.session_state['batch_results']:
+                        with st.expander(f"📄 {item['original_filename']} (Objects: {len(item['detections'])})"):
+
+                            # Showing image
+                            if item.get("processed_url"):
+                                full_img_url = f"{BACKEND_URL}{item['processed_url']}"
+                                # Downloads bytes like in history
+                                try:
+                                    img_response = requests.get(full_img_url)
+                                    if img_response.status_code == 200:
+                                        st.image(img_response.content, use_container_width=True)
+                                    else:
+                                        st.error(f"Backend did not return the image. Error: {img_response.status_code}")
+                                        st.code(f"Tried to download through link: {full_img_url}")
+                                except Exception as e:
+                                    st.error(f"Failed to load image from backend. Code: {e}")
+                            else:
+                                st.warning("Visual results not found")
+
+                            # Checkbox for JSON
+                            if st.checkbox("Show raw JSON", key=f"chk_json_{item['detection_id']}"):
+                                st.json(item['detections'])
 
 # TAB 2: Video page
 with tab_video:
@@ -127,7 +225,7 @@ with tab_video:
         st.error("Server temporarily unavailable. File loading is turned off")
     else:
         # File upload widget with format restrictions
-        uploaded_file = st.file_uploader("Choose video", type=["mp4", "avi", "mov"])
+        uploaded_file = st.file_uploader("Choose video", type=["mp4", "avi", "mov"], key="video_upload")
     
         if uploaded_file:
             # Calculating file size for beauty of the display
@@ -270,14 +368,19 @@ with tab_stats:
                                 full_url = f"{BACKEND_URL}{record['result_url']}"
                                 st.write("---")
                                 try:
-                                    if st.button(f"Load Video", key=f"btn_{record['task_id']}"):
-                                        # IMPORTANT: uploading vide bytes directly from API container
-                                        hist_video_bytes = requests.get(full_url).content
-                                        # Standart Streamlit player with this video
-                                        st.video(hist_video_bytes)
-                                except:
-                                    # If file deleted from disk or server did not return the bytes
-                                    st.error("Failed to upload video from server")
+                                    # Download bytes through link
+                                    file_bytes = requests.get(full_url).content
+
+                                    # Check the extensions: if it is a picture, draw it immediately
+                                    if record['filename'].lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
+                                        st.image(file_bytes, use_container_width=True)
+
+                                    # if video - hide player button
+                                    else:
+                                        if st.button(f"Load Video", key=f"btn_{record['task_id']}"):
+                                            st.video(file_bytes)
+                                except Exception as e:
+                                    st.error("Failed to upload file from server")
             else:
                 # If backend return 404, 500 or other error
                 st.error(f"History request error: {hist_res.status_code}")
