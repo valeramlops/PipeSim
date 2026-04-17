@@ -14,7 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api import data, model, predict, monitor, auth, vision
-from app.core.logger import log
+from app.core.logger import logger
 from app.core.limiter import limiter
 from app.api.vision import UPLOAD_VIDEO_DIR, UPLOAD_IMAGE_DIR
 from app.database import engine, Base
@@ -26,15 +26,15 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Logger
-    log.info("Connecting to DB and table checking")
+    logger.info("Connecting to DB and table checking")
     async with engine.begin() as conn:
         # Automatically create tables based on models
         await conn.run_sync(Base.metadata.create_all)
-    log.info("Database is ready")
+    logger.info("Database is ready")
 
     yield # This is where the server is running and accepting requests
     
-    log.info("Closing connecting with Database...")
+    logger.info("Closing connecting with Database...")
     await engine.dispose()
 
 app = FastAPI(
@@ -65,7 +65,7 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
 
     # Bind request_id
-    request_log = log.bind(request_id=request_id, method=request.method, path=request.url.path)
+    request_log = logger.bind(request_id=request_id, method=request.method, path=request.url.path)
     
     request_log.info("Request started")
 
@@ -109,7 +109,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_message = error.get("msg")
 
     # Logging user error as Warning
-    log.warning(
+    logger.warning(
         "Validation Error",
         field=field_name,
         error=error_message,

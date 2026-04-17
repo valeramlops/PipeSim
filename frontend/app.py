@@ -88,6 +88,8 @@ with tab_photo:
 
                 with col1:
                     st.subheader("Original")
+                    # Return the file reading cursor to the beginning
+                    uploaded_img.seek(0)
                     st.image(uploaded_img, use_container_width=True)
 
                 with col2:

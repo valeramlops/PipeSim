@@ -5,15 +5,15 @@ from pathlib import Path
 from ultralytics import YOLO
 import cv2
 from typing import List
-import logging
 import numpy as np
 import aiofiles
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db, async_session
-from app.models import DetectionRecord, VideoRecord
+from app.models import VideoRecord
 from app.core.tasks import process_video_task
+from app.core.logger import logger
 from app.core.celery_app import celery_app
 from celery.result import AsyncResult
 
@@ -29,8 +29,6 @@ UPLOAD_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 model = YOLO("yolo11n.pt")
-
-logger = logging.getLogger("uvicorn.error")
 
 # Work logic with video (OpenCV)
 def frame_generator(video_path: str):
@@ -242,7 +240,7 @@ async def upload_video_endpoint(
 @router.post("/predict_image")
 async def predict_image(file: UploadFile = File(...)):
     """
-    Synchronus image processing strictly in RAM (No disk saving)
+    Synchronus image processing strictly in RAM (with disk mirroring)
     Returns image with drawn bounding boxes
     """
 
@@ -255,6 +253,18 @@ async def predict_image(file: UploadFile = File(...)):
 
     # 1. Reading bytes uploaded file directly in RAM
     contents = await file.read()
+
+    # 1.1 Saving original on disk
+    # Genereting one ID for original and result
+    prediction_id = str(uuid.uuid4())
+
+    orig_filename = f"ram_orig_{prediction_id}_{file.filename}"
+    orig_path = UPLOAD_IMAGE_DIR / orig_filename
+
+    # Instant through bytes on disk
+    async with aiofiles.open(orig_path, "wb") as buffer:
+        await buffer.write(contents)
+    logger.success(f"Original image saved to disk: {orig_filename}")
 
     # 2. Convert bytes into OpenCV format (BGR pixel matrix)
     nparr = np.frombuffer(contents, np.uint8)
@@ -272,6 +282,17 @@ async def predict_image(file: UploadFile = File(...)):
 
     # 4. Visualization: .plot() method drawing borders and classes
     annotated_frame = result.plot(line_width=5, font_size=16)
+
+    # 4.1 Save on disk (processed photo NOT ORIGINAL)
+
+    res_filename = f"ram_res_{prediction_id}_{file.filename}"
+    res_path = UPLOAD_IMAGE_DIR / res_filename
+
+    success_save = cv2.imwrite(str(res_path), annotated_frame)
+    if success_save:
+        logger.success(f"Processed image saved to disk: {res_filename}")
+    else:
+        logger.error(f"CRITICAL: Failed to write image to {res_path}")
 
     # 5. Encode back into .jpg to sending through net
     success, encoded_image = cv2.imencode(".jpg", annotated_frame)

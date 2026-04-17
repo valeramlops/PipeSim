@@ -3,13 +3,12 @@ from sqlalchemy import update
 from app.database import async_session
 from app.models import VideoRecord
 import cv2
-import logging
 import subprocess
+import gc
 from pathlib import Path
 from ultralytics import YOLO
 from app.core.celery_app import celery_app
-
-logger = logging.getLogger(__name__)
+from app.core.logger import logger
 
 # Loading the weights globally once when the worker starts
 model = YOLO("yolo11n.pt")
@@ -99,14 +98,24 @@ def process_video_task(self, input_path: str, output_path: str):
         cap.release()
         out.release()
 
+        del frame, results, annotated_frame
+        gc.collect()
+
         # FFmpeg:
         logger.info("Starting FFmpeg conversion to H.264...")
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", temp_output,
-            "-vcodec", "libx264",
-            "-f", "mp4", output_path
-        ], check=True)
+        try:
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", temp_output,
+                "-vcodec", "libx264",
+                # Suppressing FFmpeg's extra noise to avoid clogging the loguru logs
+                "-loglevel", "error",
+                "-f", "mp4", output_path
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            logger.success("FFmpeg conversion successful")
+        except subprocess.CalledProcessError as ffmpeg_err:
+            logger.error(f"FFmpeg failed with error: {ffmpeg_err.stderr.decode()}")
+            raise RuntimeError("FFmpeg conversion failed")
 
         # Delete temp file
         Path(temp_output).unlink(missing_ok=True)
