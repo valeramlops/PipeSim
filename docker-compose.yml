@@ -67,6 +67,7 @@ services:
       - api # Starting front only after start API
     environment:
       - BACKEND_URL=http://api:8000
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=2000 # Upload limit (2gb)
     volumes:
       - ./frontend:/app
 

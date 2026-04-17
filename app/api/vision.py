@@ -7,6 +7,7 @@ import cv2
 from typing import List
 import logging
 import numpy as np
+import aiofiles
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -200,10 +201,14 @@ async def upload_video_endpoint(
     unique_filename = f"{video_id}_{file.filename}"
     video_path = UPLOAD_VIDEO_DIR / unique_filename
 
-    with open(video_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Chunk size (5 mb)
+    CHUNK_SIZE = 1024 * 1024 * 5
 
-    logger.info(f"Video {unique_filename} successfully saved on disk")
+    async with aiofiles.open(video_path, "wb") as buffer:
+        while chunk := await file.read(CHUNK_SIZE):
+            await buffer.write(chunk)
+
+    logger.info(f"Video {unique_filename} successfully saved via streaming")
 
     # 1.1 Defining output path for the worker
     output_filename = f"Processed_{unique_filename}"

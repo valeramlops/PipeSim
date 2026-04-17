@@ -225,7 +225,12 @@ with tab_video:
         st.error("Server temporarily unavailable. File loading is turned off")
     else:
         # File upload widget with format restrictions
-        uploaded_file = st.file_uploader("Choose video", type=["mp4", "avi", "mov"], key="video_upload")
+        uploaded_file = st.file_uploader(
+            "Choose video",
+            type=["mp4", "avi", "mov"],
+            key="video_upload",
+            help="Streaming mode is enabled. Max file size is limited to 2GB to prevent storage overflow."
+        )
     
         if uploaded_file:
             # Calculating file size for beauty of the display
