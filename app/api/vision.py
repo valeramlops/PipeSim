@@ -345,11 +345,13 @@ async def get_video_history():
     Return video history from PostgreSQL
     """
     try:
+        # Looking for record in database
         async with async_session() as db:
             stmt = select(VideoRecord).order_by(VideoRecord.created_at.desc())
             result = await db.execute(stmt)
             records = result.scalars().all()
 
+            # Return info
             return {
                 "status": "success",
                 "count": len(records),
@@ -366,9 +368,52 @@ async def get_video_history():
                     } for r in records
                 ]
             }
+        # Return error
     except Exception as e:
         logger.error(f"History error: {e}")
         raise HTTPException(
             status_code=500,
             detail="Database error"
+        )
+    
+@router.delete("/history/{task_id}")
+async def delete_history_record(task_id: str):
+    """
+    Delete record from Database and physically erases the file from the disk
+    """
+    try:
+        async with async_session() as db:
+            # 1. Looking for record in database
+            stmt = select(VideoRecord).where(VideoRecord.id == task_id)
+            result = await db.execute(stmt)
+            record = result.scalar_one_or_none()
+
+            if not record:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Record not found in database"
+                )
+            
+            # 2. Deleting physical file (if it exists)
+            if record.result_path:
+                file_path = Path(record.result_path)
+                if file_path.exists():
+                    file_path.unlink() # Safety deleting file
+                    logger.info(f"Deleted physical file: {file_path.name}")
+
+            # 3. Deleting record from PostgreSQL
+            await db.delete(record)
+            await db.commit()
+
+            logger.success(f"Task {task_id} completely removed from system")
+            return {
+                "status": "success",
+                "message": "Record and file completely deleted"
+            }
+    
+    except Exception as e:
+        logger.error(f"Failed to delete record {task_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Database or FileSystem error"
         )

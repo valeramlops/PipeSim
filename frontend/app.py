@@ -373,8 +373,19 @@ with tab_stats:
                 if not history_data:
                     st.info("Database is empty now")
                 else:
+                    # Pagination initialization
+                    if 'history_limit' not in st.session_state:
+                        st.session_state.history_limit = 10
+                    
+                    # Cutting array to target limit
+                    visible_data = history_data[:st.session_state.history_limit]
+
+                    # Compact supercontainer with scroll
+                    with st.container(height=650, border=True):
+                        cols = st.columns(2)
+
                     # Trying process data from DB (if request to API successfully done)
-                    for record in history_data:
+                    for idx, record in enumerate(history_data):
                         # Lowercase the status to avoid comparison errors (Success vs success)
                         db_status = record.get('status', '').lower()
 
@@ -385,45 +396,64 @@ with tab_stats:
                             status_icon = "⏳"
                         else:
                             status_icon = "❌"
-                        # Creating expander. In header - filename and status
-                        with st.expander(f"{status_icon} {record['filename']} ({record['status'].upper()})"):
-                            st.write(f"Task ID: {record['task_id']}")
-                            st.write(f"Data: {record['created_at']}")
+                        
+                        # Distribute the cards into columns (even cards to the left, odd cards to the right)
+                        with cols[idx % 2]:
+                            # Creating expander. In header - filename and status
+                            with st.expander(f"{status_icon} {record['filename']} ({record['status'].upper()})"):
+                                # Make info more compact through caption
+                                st.caption(f"ID: {record['task_id'][:8]}... | Date: {record['created_at']}")
 
-                            # If video successfully processed and result path is exist in DB - trying to show player
-                            if db_status in ["success", "completed"] and record.get('result_url'):
-                                # Forming full link on static file through backend proxy-URL
-                                full_url = f"{BACKEND_URL}{record['result_url']}"
-                                st.write("---")
-                                try:
-                                    # Download bytes through link
-                                    file_bytes = requests.get(full_url).content
+                                # If video successfully processed and result path is exist in DB - trying to show player
+                                if db_status in ["success", "completed"] and record.get('result_url'):
+                                    # Forming full link on static file through backend proxy-URL
+                                    full_url = f"{BACKEND_URL}{record['result_url']}"
+                                    st.write("---")
+                                    try:
+                                        # Download bytes through link
+                                        file_bytes = requests.get(full_url).content
 
-                                    # Check the extensions: if it is a picture, draw it immediately
-                                    if record['filename'].lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
-                                        st.image(file_bytes, use_container_width=True)
+                                        # Check the extensions: if it is a picture, draw it immediately
+                                        if record['filename'].lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
+                                            st.image(file_bytes, use_container_width=True)
 
-                                    # if video - show player and download buttons
-                                    else:
-                                        col_play, col_down = st.columns(2)
-                                        with col_play:
-                                            if st.button(f"Watch Video", key=f"btn_watch_{record['task_id']}", use_container_width=True):
-                                                st.video(file_bytes)
-                                        with col_down:
+                                        # if video - show player and download buttons
+                                        else:
+                                            # Drawing video instantly
+                                            st.video(file_bytes)
+                                            # Button for download
                                             st.download_button(
                                                 label="Download File",
                                                 data=file_bytes,
                                                 file_name=f"archibe_{record['filename']}",
                                                 mime="video/mp4",
-                                                key=f"btn_dl_{record['task_id']}",
+                                                key=f"btn_dl_{record['task_id']}_{idx}",
                                                 use_container_width=True
                                             )
-                                except Exception as e:
-                                    st.error("Failed to upload file from server")
+                                    except Exception as e:
+                                        st.error("Failed to upload file from server")
+                                        
+                            # Delete button
+                            if st.button("🗑️ Delete", key=f"delete_{record['task_id']}_{idx}", use_container_width=True):
+                                with st.spinner("Deleting..."):
+                                    del_res = requests.delete(f"{BACKEND_URL}/api/vision/history/{record['task_id']}")
+                                    if del_res.status_code == 200:
+                                        st.toast(f"Record {record['filename']} completely deleted!", icon="💥")
+                                        time.sleep(1) # Let user read toas
+                                        st.rerun() # Reload interface
+                                    else:
+                                        st.error(f"Failed to delete record. Status code: {del_res.status_code}: {del_res.text}")
+                
+                # Show button only if there are still unshown recordings
+                if st.session_state.history_limit < len(history_data):
+                    if st.button(f"🔄 Load 10 more (Showing {st.session_state.history_limit} of {len(history_data)})", use_container_width=True):
+                        st.session_state.history_limit += 10
+                        st.rerun()
+
             else:
                 # If backend return 404, 500 or other error
                 st.error(f"History request error: {hist_res.status_code}")
-                        
+
         except Exception as e:
             # If API container is turned off or the Docker network times out
             st.error(f"Network error or failed to process database data: {e}")
