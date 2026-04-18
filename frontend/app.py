@@ -299,10 +299,31 @@ with tab_video:
 
                                     # Loading video bytes in Docker-net
                                     video_bytes = requests.get(video_url).content
-                                    st.video(video_bytes) # Rendering player
+
+                                    # Divide display: left (video) | right (metrix and button for download)
+                                    col_vid, col_stat = st.columns([2, 1])
+
+                                    with col_vid:
+                                        st.video(video_bytes) # Rendering player
+
+                                    with col_stat:
+                                        st.success("Analysis complete")
+                                        # If wprker return dict of frames, display metrix
+                                        if isinstance(raw_result, dict) and "frames" in raw_result:
+                                            st.metric(label="Processed Frames", value=raw_result["frames"], delta="YOLOv11")
+
+                                        # Native button for download
+                                        st.download_button(
+                                            label="Download Processed Video",
+                                            data=video_bytes,
+                                            file_name=f"detected_{filename}",
+                                            mime="video/mp4",
+                                            type="primary",
+                                            use_container_width=True
+                                        )
 
                                     break # Loop end
-                            
+
                                 elif status == "FAILURE":
                                     status_text.error(f"Worker error: {task_res.get('error')}")
                                     break
@@ -382,10 +403,21 @@ with tab_stats:
                                     if record['filename'].lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
                                         st.image(file_bytes, use_container_width=True)
 
-                                    # if video - hide player button
+                                    # if video - show player and download buttons
                                     else:
-                                        if st.button(f"Load Video", key=f"btn_{record['task_id']}"):
-                                            st.video(file_bytes)
+                                        col_play, col_down = st.columns(2)
+                                        with col_play:
+                                            if st.button(f"Watch Video", key=f"btn_watch_{record['task_id']}", use_container_width=True):
+                                                st.video(file_bytes)
+                                        with col_down:
+                                            st.download_button(
+                                                label="Download File",
+                                                data=file_bytes,
+                                                file_name=f"archibe_{record['filename']}",
+                                                mime="video/mp4",
+                                                key=f"btn_dl_{record['task_id']}",
+                                                use_container_width=True
+                                            )
                                 except Exception as e:
                                     st.error("Failed to upload file from server")
             else:

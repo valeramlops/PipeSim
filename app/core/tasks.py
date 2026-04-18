@@ -67,7 +67,33 @@ def process_video_task(self, input_path: str, output_path: str):
                 break
 
             results = model(frame, conf=0.25, device=0)[0]
-            annotated_frame = results.plot()
+            annotated_frame = frame.copy()
+
+            if results.boxes is not None:
+                for box in results.boxes:
+                    # Getting coords, class and conf
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    conf = float(box.conf[0])
+                    cls_id = int(box.cls[0])
+                    class_name = model.names[cls_id]
+                    label = f"{class_name} {conf:.2f}"
+
+                    # Setting style (In OpenCV BGR format NOT RGB)
+                    color = (255, 144, 30)
+                    text_color = (255, 255, 255)
+
+                    # 1. Drawing slim boarder
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+
+                    # 2. Doing filled label for text
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                    cv2.rectangle(annotated_frame, (x1, y1 - th - 10), (x1 + tw + 10, y1), color, -1)
+
+                    # 3. Writting text with anti-aliasing (font smoothing LINE_AA)
+                    cv2.putText(
+                        annotated_frame, label, (x1 + 5, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1, cv2.LINE_AA
+                    )
 
             out.write(annotated_frame)
             frames_counted += 1
