@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Response, BackgroundTasks, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Response, BackgroundTasks, Request, Depends
 import shutil
 import uuid
 from pathlib import Path
@@ -340,34 +340,33 @@ async def get_task_status(task_id: str):
     return response
 
 @router.get("/history")
-async def get_video_history():
+async def get_video_history(db: AsyncSession = Depends(get_db)):
     """
     Return video history from PostgreSQL
     """
     try:
         # Looking for record in database
-        async with async_session() as db:
-            stmt = select(VideoRecord).order_by(VideoRecord.created_at.desc())
-            result = await db.execute(stmt)
-            records = result.scalars().all()
+        stmt = select(VideoRecord).order_by(VideoRecord.created_at.desc())
+        result = await db.execute(stmt)
+        records = result.scalars().all()
 
-            # Return info
-            return {
-                "status": "success",
-                "count": len(records),
-                "history": [
-                    {
-                        "task_id": r.id,
-                        "filename": r.filename,
-                        "status": r.status,
-                        "result_url": (
-                            f"/static/{'images' if r.filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')) else 'videos'}/{Path(r.result_path).name}"
-                            if r.result_path else None
-                        ),
-                        "created_at": r.created_at
-                    } for r in records
-                ]
-            }
+        # Return info
+        return {
+            "status": "success",
+            "count": len(records),
+            "history": [
+                {
+                    "task_id": r.id,
+                    "filename": r.filename,
+                    "status": r.status,
+                    "result_url": (
+                        f"/static/{'images' if r.filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')) else 'videos'}/{Path(r.result_path).name}"
+                        if r.result_path else None
+                    ),
+                    "created_at": r.created_at
+                } for r in records
+            ]
+        }
         # Return error
     except Exception as e:
         logger.error(f"History error: {e}")
