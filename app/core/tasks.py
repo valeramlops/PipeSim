@@ -22,7 +22,6 @@ model = YOLO("yolo11n.pt")
     retry_backoff=True # Pause between attempts will grow
 )
 
-@celery_app.task(bind=True, name="process_video_task")
 def process_video_task(self, input_path: str, output_path: str):
     logger.info(f"Starting video processing: {input_path}")
 

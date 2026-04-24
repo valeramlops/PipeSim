@@ -121,3 +121,42 @@ async def test_upload_video_success(mock_delay, async_client: AsyncClient):
 
     # Check that Celery was actually called
     mock_delay.assert_called_once()
+
+# BLOCK 4 Edge Cases
+
+# Test 7: History request, when database is empty
+async def test_get_video_history_empty(async_client: AsyncClient):
+    # Dont add fake entries, the database is virgin
+    response = await async_client.get("/api/vision/history")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Check that API is reacts adequately to emptiness
+    assert data["status"] == "success"
+    assert data["count"] == 0
+    assert data["history"] == [] # An empty list should be returned
+
+# Test 8: Simulating a database crash (Checking for a 500 error)
+async def test_get_video_history_db_error(async_client: AsyncClient):
+    # 1. Preserving the original working mock-dependency from conftest
+    original_override = app.dependency_overrides.get(get_db)
+
+    # 2. Creating "evil" dependency, which simulating disconnection
+    async def evil_get_db():
+        class EvilSession:
+            async def execute(self, *args, **kwargs):
+                raise RuntimeError("Database server is on fire")
+        yield EvilSession()
+    
+    # 3. Replace the normal database with an "evil" database
+    app.dependency_overrides[get_db] = evil_get_db
+
+    # 4. Make request (expect the router to catch the RuntimeError and return 500)
+    response = await async_client.get("/api/vision/history")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Database error"
+
+    # 5. IMPORTANT: Returning the normal dependency back to not break other tests
+    app.dependency_overrides[get_db] = original_override
