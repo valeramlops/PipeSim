@@ -122,7 +122,7 @@ async def process_and_predict(passengers: List[PassengerData], db: AsyncSession)
         )
 
     model = joblib.load(MODEL_PATH)
-    raw_data_list = [p.dict() for p in passengers]
+    raw_data_list = [p.model_dump() for p in passengers]
 
     # 1. Work with cache
     # Stage 1: Cache generating
