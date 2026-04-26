@@ -65,3 +65,26 @@ def test_process_video_success(mock_asyncio, mock_subprocess, mock_writer, mock_
 
     # Checking that the status 'completed' was attempted to be written to the database
     mock_asyncio.assert_called()
+
+# BLOCK 3: Fatal error
+
+# Test 3: Exceeding the attempt limit
+@patch("app.core.tasks.cv2.VideoCapture")
+@patch("app.core.tasks.asyncio.run") # Silencing the database to intercept the call
+def test_process_video_fatal_failure(mock_asyncio, mock_cv2_cap):
+    # Stub: the file does not open
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = False
+    mock_cv2_cap.return_value = mock_cap
+
+    # Set up the task as if it's your last 3rd attempt
+    process_video_task.request.id = "fatal-task-123"
+    process_video_task.request.retries = 3
+    process_video_task.max_retries = 3
+
+    # Function anyway must return error
+    with pytest.raises(FileNotFoundError):
+        process_video_task("corrupted.mp4", "out.mp4")
+
+    # BUT at the same time, she had to call asyncio.run to record the failed status
+    mock_asyncio.assert_called()

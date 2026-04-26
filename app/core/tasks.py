@@ -40,26 +40,26 @@ def process_video_task(self, input_path: str, output_path: str):
         except Exception as db_err:
             logger.error(f"Failed to update DB for {self.request.id}: {db_err}")
 
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        logger.error(f"Failde to open video: {input_path}")
-        raise FileNotFoundError(f"Cannot open video file: {input_path}")
-
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # Get video frames count
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    # Initializing the oven (VideoWriter) with the correct syntax
-    temp_output = str(output_path).replace(".mp4", "_temp.mp4")
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
-
-    frames_counted = 0
-
     try:
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            logger.error(f"Failed to open video: {input_path}")
+            raise FileNotFoundError(f"Cannot open video file: {input_path}")
+
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Get video frames count
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Initializing the oven (VideoWriter) with the correct syntax
+        temp_output = str(output_path).replace(".mp4", "_temp.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
+
+        frames_counted = 0
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -117,39 +117,39 @@ def process_video_task(self, input_path: str, output_path: str):
             if frames_counted % 100 == 0:
                 logger.info(f"Processed: {frames_counted} frames...")
 
-        # LOOP HAS ENDED, THE FRAMES HAVE ENDED
+            # LOOP HAS ENDED, THE FRAMES HAVE ENDED
 
-        # IMPORTANT: First, close the OpenCV files so that they are saved to disk
-        cap.release()
-        out.release()
+            # IMPORTANT: First, close the OpenCV files so that they are saved to disk
+            cap.release()
+            out.release()
 
-        del frame, results, annotated_frame
-        gc.collect()
+            del frame, results, annotated_frame
+            gc.collect()
 
-        # FFmpeg:
-        logger.info("Starting FFmpeg conversion to H.264...")
-        try:
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", temp_output,
-                "-vcodec", "libx264",
-                # Suppressing FFmpeg's extra noise to avoid clogging the loguru logs
-                "-loglevel", "error",
-                "-f", "mp4", output_path
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            logger.success("FFmpeg conversion successful")
-        except subprocess.CalledProcessError as ffmpeg_err:
-            logger.error(f"FFmpeg failed with error: {ffmpeg_err.stderr.decode()}")
-            raise RuntimeError("FFmpeg conversion failed")
+            # FFmpeg:
+            logger.info("Starting FFmpeg conversion to H.264...")
+            try:
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", temp_output,
+                    "-vcodec", "libx264",
+                    # Suppressing FFmpeg's extra noise to avoid clogging the loguru logs
+                    "-loglevel", "error",
+                    "-f", "mp4", output_path
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                logger.success("FFmpeg conversion successful")
+            except subprocess.CalledProcessError as ffmpeg_err:
+                logger.error(f"FFmpeg failed with error: {ffmpeg_err.stderr.decode()}")
+                raise RuntimeError("FFmpeg conversion failed")
 
-        # Delete temp file
-        Path(temp_output).unlink(missing_ok=True)
-        
-        # Updating DB status -> completed
-        asyncio.run(update_db_status(
-            new_status="completed",
-            path=str(output_path)
-        ))
+            # Delete temp file
+            Path(temp_output).unlink(missing_ok=True)
+            
+            # Updating DB status -> completed
+            asyncio.run(update_db_status(
+                new_status="completed",
+                path=str(output_path)
+            ))
 
     except Exception as e:
         logger.error(f"Rendering fail: {e}. Worker will retry!")
