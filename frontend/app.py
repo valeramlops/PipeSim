@@ -1,0 +1,532 @@
+import streamlit as st
+import requests
+import os
+import time
+import pandas as pd
+import numpy as np
+import uuid
+from pathlib import Path
+
+import streamlit.components.v1 as components
+
+# Page setting (Always first in Streamlit)
+st.set_page_config(
+    page_title="PipeSim MLOps",
+    page_icon="🚀",
+    layout="wide"
+)
+
+# Accessing the backend by service name in Docker (api)
+BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
+
+# Defender: API availability check
+# Defend frontend from dumping, if backend turned off
+def check_api_health():
+    try:
+        res = requests.get(f"{BACKEND_URL}/", timeout=2) 
+        return res.status_code == 200
+    except:
+        return False
+    
+# Pinging server per each page loading
+is_api_online = check_api_health()
+
+# SideBar
+with st.sidebar:
+    st.title("System status")
+    st.write("---")
+
+    if is_api_online:
+        st.success("API: Connected")
+    else:
+        st.error("API: Unavailable")
+        st.warning("Check backend container (docker ps)")
+
+    st.divider()
+    if st.button("Reload interface", use_container_width=True):
+        st.rerun()
+
+# Main page header
+st.title("PipeSim: Control panel")
+st.write("Professional object detection system based on YOLOv11 and GPU acceleration")
+st.divider()
+
+# TABS
+tab_photo, tab_video, tab_stats = st.tabs(["Photo", "Video", "Statistics and history"])
+
+# TAB 1: PHOTO
+with tab_photo:
+    spacer_left, main_col, spacer_right = st.columns([1, 3, 1])
+
+    with main_col:
+        st.header("Image Detection")
+        if not is_api_online:
+            st.error("Function unavailable: there is no connection to the server")
+        else:
+            # Sub tabs
+            sub_tab_instant, sub_tab_batch = st.tabs(["⚡ Instant (RAM-only)", "📦 Batch Mode (Save to DB)"])
+
+            with sub_tab_instant:
+                st.markdown("""
+                    <div style="
+                        text-align: center;
+                        padding: 1rem;
+                        background-color: rgba(28, 131, 225, 0.1);
+                        color: #8cb4df;
+                        border-radius: 0.5rem;
+                        border: 1px solid rgba(28, 131, 225, 0.2);
+                        margin-bottom: 1rem;
+                    ">
+                        📦 <b>Upload a single photo.</b> Inference will run instantly in RAM without saving to the database.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                # Mode 1: Instant
+                # Only photo loading widget
+                uploaded_img = st.file_uploader("Upload single photo (JPG/PNG)", type=["jpg", "jpeg", "png"], key="single_upload")
+
+                if uploaded_img:
+                    # Button
+                    analyze_clicked = st.button("Analyze photo", type="primary", use_container_width=True, key="btn_single")
+
+                    # Divide the screen into two columns for beauty
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.subheader("Original")
+                        # Return the file reading cursor to the beginning
+                        uploaded_img.seek(0)
+                        st.image(uploaded_img, use_container_width=True)
+
+                    with col2:
+                        st.subheader("Result")
+
+                        # Logic inside the right column:
+                        if not analyze_clicked:
+                            # Until you click, we're showing the plate
+                            st.markdown(
+                                """
+                                <div style=
+                                "text-align: center;
+                                padding: 1rem;
+                                background-color: rgba(28, 131, 225, 0.1);
+                                color: #8cb4df;
+                                border-radius: 0.5rem;
+                                border: 1px solid rgba(28, 131, 225, 0.2);
+                                margin-bottom: 1rem;">
+                                    👆 Click the button above to start detection
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                        else:
+                            with st.spinner("Processing in RAM..."):
+                                try:
+                                    # Packing file for FastAPI
+                                    files = {
+                                        "file": (uploaded_img.name, uploaded_img.getvalue(), uploaded_img.type)
+                                    }
+                                    
+                                    res = requests.post(f"{BACKEND_URL}/api/vision/predict_image", files=files)
+
+                                    if res.status_code == 200:
+                                        # Server return bytes of ready image, Streamlit drawing it directly
+                                        st.image(res.content, use_container_width=True)
+                                        st.toast("Photo successfully processed", icon='⚡')
+                                    else:
+                                        st.error(f"Server rejected request. Code: {res.status_code}")
+                                
+                                except Exception as e:
+                                    st.error(f"Network error: {e}")
+
+            with sub_tab_batch:
+                # markdow
+                st.markdown(
+                    """
+                    <div style="
+                        text-align: center;
+                        padding: 1rem;
+                        background-color: rgba(28, 131, 225, 0.1);
+                        color: #8cb4df;
+                        border-radius: 0.5rem;
+                        border: 1px solid rgba(28, 131, 225, 0.2);
+                        margin-bottom: 1rem;
+                    ">
+                        📦 <b>Upload multiple photos.</b> Inference will run in batch, and JSON results will be saved to PostgreSQL. 
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                # Accept_multiple_files=True Allows you to select many files at once
+                uploaded_imgs = st.file_uploader(
+                    "Upload photos batch (JPG/PNG)",
+                    type = ["jpg", "jpeg", "png"],
+                    accept_multiple_files=True,
+                    key="batch_upload_field"
+                )
+
+                if uploaded_imgs:
+                    st.write(f"Selected files: {len(uploaded_imgs)}")
+
+                    if st.button("Process Batch 📦", type="primary", use_container_width=True, key="btn_multi"):
+                        with st.spinner(f"Sending {len(uploaded_imgs)} files to backend..."):
+                            try:
+                                # Create a list of tuples with the "files" key,
+                                # as FastAPI expects the parameter files:List[UploadFile]
+                                files_payload = [
+                                    ("files", (f.name, f.getvalue(), f.type)) for f in uploaded_imgs
+                                ]
+
+                                res = requests.post(f"{BACKEND_URL}/api/vision/upload", files=files_payload)
+
+                                if res.status_code == 200:
+                                    data = res.json()
+
+                                    # Adding data in session memory
+                                    st.session_state['batch_results'] = data.get("results", [])
+
+                                    st.success("Batch processed!")
+                                    st.toast(f"✅ {data.get('processed_count')} photos pushed to DB!", icon='📦')
+
+                                else:
+                                    st.error(f"Server rejected request. Code: {res.status_code}")
+                                    st.json(res.json())
+
+                            except Exception as e:
+                                st.error(f"Network error: {e}")
+                    
+                    # Reading data from session
+                    if 'batch_results' in st.session_state and st.session_state['batch_results']:
+                        st.divider()
+                        st.subheader("Batch Results")
+
+                        for item in st.session_state['batch_results']:
+                            with st.expander(f"📄 {item['original_filename']} (Objects: {len(item['detections'])})"):
+
+                                # Showing image
+                                if item.get("processed_url"):
+                                    full_img_url = f"{BACKEND_URL}{item['processed_url']}"
+                                    # Downloads bytes like in history
+                                    try:
+                                        img_response = requests.get(full_img_url)
+                                        if img_response.status_code == 200:
+                                            st.image(img_response.content, use_container_width=True)
+                                        else:
+                                            st.error(f"Backend did not return the image. Error: {img_response.status_code}")
+                                            st.code(f"Tried to download through link: {full_img_url}")
+                                    except Exception as e:
+                                        st.error(f"Failed to load image from backend. Code: {e}")
+                                else:
+                                    st.warning("Visual results not found")
+
+                                # Checkbox for JSON
+                                if st.checkbox("Show raw JSON", key=f"chk_json_{item['detection_id']}"):
+                                    st.json(item['detections'])
+
+# TAB 2: Video page
+with tab_video:
+    spacer_left, main_col, spacer_right = st.columns([1, 4, 1])
+
+    with main_col:
+        st.header("Stream analysis")
+
+        # Blocking downloads when the API crashes
+        if not is_api_online:
+            st.error("Server temporarily unavailable. File loading is turned off")
+        else:
+            # File upload widget with format restrictions
+            uploaded_file = st.file_uploader(
+                "Choose video",
+                type=["mp4", "avi", "mov"],
+                key="video_upload",
+                help="Streaming mode is enabled. Max file size is limited to 2GB to prevent storage overflow."
+            )
+        
+            if uploaded_file:
+                # Calculating file size for beauty of the display
+                file_size_mb = round(uploaded_file.size / (1024 * 1024), 2)
+                st.info(f"File ready: **{uploaded_file.name}** ({file_size_mb} MB)")
+
+                # Send to backend button
+                send_empry_col_lef, send_btn_col, send_empry_col_right = st.columns([2, 3, 2])
+                with send_btn_col:
+                    if st.button("Send to processing", type="primary", use_container_width=True):
+
+                        # Spinner spins while we wait for a response from FastAPI
+                        with st.spinner("Sending file to backend..."):
+                            try:
+                                # 1. Generating ID directly in frontend
+                                video_id = str(uuid.uuid4())
+                                unique_filename = f"{video_id}_{uploaded_file.name}"
+
+                                # 2. Frontend saving file on disk
+                                save_dir = Path("/app/uploads/videos")
+                                save_dir.mkdir(parents=True, exist_ok=True)
+                                file_path = save_dir / unique_filename
+
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_file.getbuffer())
+
+                                # Sending JSON to API
+                                payload = {
+                                    "filename": uploaded_file.name,
+                                    "video_id": video_id
+                                }
+
+                                fast_endpoint = f"{BACKEND_URL}/api/vision/upload_video_fast"
+                                response = requests.post(fast_endpoint, json=payload, timeout=10)
+
+                                # Saving task ID in session and exit
+                                if response.status_code == 200:
+                                    st.session_state.active_video_task = response.json().get("task_id")
+                                    if "video_ready_data" in st.session_state:
+                                        del st.session_state["video_ready_data"]
+                                    st.rerun()
+                                else:
+                                    st.error(f"Server rejected request. Code: {response.status_code}")
+
+                            except Exception as e:
+                                # If network is down (timeout or Docker dump)
+                                st.error(f"Internal network error: {e}")
+                                response = None
+                        
+                # ASYNC POLLING
+                if st.session_state.get("active_video_task"):
+                    st.write("Processing status")
+
+                    @st.fragment(run_every=1)
+                    def monitor_task():
+                        task_id = st.session_state.active_video_task
+                        # Status check every 2 seconds loop
+                        task_res = requests.get(f"{BACKEND_URL}/api/vision/task/{task_id}").json()
+                        status = task_res.get("task_status", "").upper()
+                        progress = task_res.get("progress", 0)
+
+                        if status in ["PENDING", "PROGRESS"]:
+                            st.progress(int(progress))
+                            if int(progress) >= 100:
+                                st.info("📊 YOLO finished. Gemini is generating analytical report...")
+                            else:
+                                st.info(f"Frame detection: {int(progress)}%")
+                            
+                        elif status in ["SUCCESS", "completed", "COMPLETED"]:
+                            st.session_state.video_ready_data = task_res
+                            del st.session_state["active_video_task"]
+                            st.rerun()
+                        
+                        elif status == "FAILURE":
+                            st.error(f"Worker error: {task_res.get('error')}")
+                            del st.session_state["active_video_task"]
+                            st.rerun()
+                                
+                    monitor_task()
+
+                # Results drawing
+                if st.session_state.get("video_ready_data"):
+                    task_res = st.session_state.video_ready_data
+                    raw_result = task_res.get("result", {})
+                    
+                    res_path = raw_result.get("output_path", "") if isinstance(raw_result, dict) else str(raw_result)
+                    filename = Path(res_path).name
+                    video_url = f"{BACKEND_URL}/static/videos/{filename}"
+                    video_bytes = requests.get(video_url).content
+
+                    st.write("### Results")
+                    st.success("✅ Analysis complete")
+                    st.video(video_bytes)
+
+                    if isinstance(raw_result, dict):
+                        # Block with text
+                        llm_text = raw_result.get("llm_summary")
+                        if llm_text:
+                            with st.container(height=400, border=True):
+                                st.markdown(llm_text)
+                                
+                        if "frames" in raw_result:
+                            st.metric(label="Processed Frames", value=raw_result["frames"], delta="YOLOv11")
+
+                    # Button for download
+                    btn_col, empry_col = st.columns([2, 3])
+                    with btn_col:
+                        st.download_button(
+                            label="Download Processed Video",
+                            data=video_bytes,
+                            file_name=f"detected_{filename}",
+                            mime="video/mp4",
+                            type="primary",
+                            use_container_width=True
+                        )
+
+# TAB 3: Statistic and History
+with tab_stats:
+    st.header("System analysis")
+
+    if 'history_limit' not in st.session_state:
+        st.session_state.history_limit = 10
+
+    if not is_api_online:
+        st.warning("Failed to load history: API doesn't respond")
+    else:
+        # 1. Dashboard (Statistic)
+        try:
+            hist_res = requests.get(f"{BACKEND_URL}/api/vision/history", timeout=5)
+            if hist_res.status_code == 200:
+                data = hist_res.json()
+                history_data = data.get("history", [])
+                count = data.get("count", 0)
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total processed", count, "Database (PostgreSQL)")
+                col2.metric("Acceleration of inference", "CUDA", "GPU Active")
+                col3.metric("Worker status", "Online", "Celery", delta_color="normal")
+                st.divider()
+
+                # Grafana integration
+                st.subheader("🚀 Real-time Hardware Load")
+
+                mon_col1, mon_col2, mon_col3 = st.columns(3)
+
+                with mon_col1:
+                    st.caption("💻 CPU Load")
+                    components.iframe(
+                        "http://localhost:3000/d-solo/adslw28/cpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        height=250,
+                        scrolling=False
+                    )
+
+                with mon_col2:
+                    st.caption("🧠 RAM Usage")
+                    components.iframe(
+                        "http://localhost:3000/d-solo/ad6sk64/ram-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        height=250,
+                        scrolling=False
+                    )
+
+                with mon_col3:
+                    st.caption("🎮 GPU Utilization (NVIDIA DCGM)")
+                    components.iframe(
+                        "http://localhost:3000/d-solo/adjtpgs/gpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        height=250,
+                        scrolling=False
+                    )
+
+                st.divider()
+
+                # 2. History log
+                st.subheader("Operation history")
+
+                if not history_data:
+                    st.info("Database is empty now")
+                else:
+                    # Cutting array to target limit
+                    visible_data = history_data[:st.session_state.history_limit]
+
+                    # Compact supercontainer with scroll
+                    with st.container(height=650, border=True):
+                        cols = st.columns(2)
+
+                    # Trying process data from DB (if request to API successfully done)
+                    for idx, record in enumerate(history_data):
+                        # Lowercase the status to avoid comparison errors (Success vs success)
+                        db_status = record.get('status', '').lower()
+
+                        # Icon choise logic: completed, processing or dump with error
+                        if db_status in ["success", "completed"]:
+                            status_icon = "✅"
+                        elif db_status in ["processing", "pending", "progress"]:
+                            status_icon = "⏳"
+                        else:
+                            status_icon = "❌"
+                        
+                        # Distribute the cards into columns (even cards to the left, odd cards to the right)
+                        with cols[idx % 2]:
+                            # Creating expander. In header - filename and status
+                            with st.expander(f"{status_icon} {record['filename']} ({record['status'].upper()})"):
+                                
+                                st.json(record)
+
+                                # Make info more compact through caption
+                                st.caption(f"ID: {record['task_id'][:8]}... | Date: {record['created_at']}")
+
+                                # If video successfully processed and result path is exist in DB - trying to show player
+                                result_path = record.get('result_path')
+
+                                if db_status in ["success", "completed"] and result_path:
+                                    # Forming link
+                                    filename = Path(result_path).name
+                                    full_url = f"{BACKEND_URL}/static/videos/{filename}"
+                                    
+                                    st.write("---")
+                                    try:
+                                        file_bytes = requests.get(full_url).content
+
+                                        if record['filename'].lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
+                                            st.image(file_bytes, use_container_width=True)
+                                        else:
+                                            st.video(file_bytes)
+                                            st.download_button(
+                                                label="Download File",
+                                                data=file_bytes,
+                                                file_name=f"archive_{record['filename']}",
+                                                mime="video/mp4",
+                                                key=f"btn_dl_{record['task_id']}_{idx}",
+                                                use_container_width=True
+                                            )
+
+                                        # Analytics & LLM Report
+                                        detections = record.get("detections_data")
+                                        if detections:
+                                            st.write("---")
+                                            st.markdown("📊 Video analytics")
+
+                                            # Report display
+                                            llm_report = detections.get("llm_summary")
+                                            if llm_report:
+                                                with st.container(height=250, border=True):
+                                                    st.markdown(f"**🧠 AI-report (Gemini):**\n\n{llm_report}")
+
+                                            c1, c2 = st.columns(2)
+                                            with c1:
+                                                st.write("Founded objects:")
+                                                counts = detections.get("class_counts", {})
+                                                if counts:
+                                                    df_counts = pd.DataFrame(list(counts.items()), columns=["Class", "Count"]).set_index("Class")
+                                                    st.bar_chart(df_counts, color="#FF4B4B")
+                                                else:
+                                                    st.info("No objects detected")
+                                            
+                                            with c2:
+                                                st.write("Dynamics in the frame:")
+                                                timeline = detections.get("timeline", [])
+                                                if timeline:
+                                                    df_timeline = pd.DataFrame(timeline).set_index("frame")
+                                                    st.line_chart(df_timeline, color="#1C83E1")
+                                    except Exception as e:
+                                        st.error(f"Failed to load file from server: {e}")
+
+                            # Delete button
+                            if st.button("🗑️ Delete", key=f"delete_{record['task_id']}_{idx}", use_container_width=True):
+                                with st.spinner("Deleting..."):
+                                    del_res = requests.delete(f"{BACKEND_URL}/api/vision/history/{record['task_id']}")
+                                    if del_res.status_code == 200:
+                                        st.toast(f"Record {record['filename']} completely deleted!", icon="💥")
+                                        time.sleep(1) # Let user read toas
+                                        st.rerun() # Reload interface
+                                    else:
+                                        st.error(f"Failed to delete record. Status code: {del_res.status_code}: {del_res.text}")
+                
+                # Show button only if there are still unshown recordings
+                if st.session_state.history_limit < len(history_data):
+                    if st.button(f"🔄 Load 10 more (Showing {st.session_state.history_limit} of {len(history_data)})", use_container_width=True):
+                        st.session_state.history_limit += 10
+                        st.rerun()
+
+            else:
+                # If backend return 404, 500 or other error
+                st.error(f"History request error: {hist_res.status_code}")
+
+        except Exception as e:
+            # If API container is turned off or the Docker network times out
+            st.error(f"Network error or failed to process database data: {e}")

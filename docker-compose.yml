@@ -1,0 +1,154 @@
+services:
+  # Database
+  db:
+    image: postgres:15
+    restart: always
+    networks:
+      - pipesim_net
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pipesim_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  redis:
+    image: redis:8-alpine
+    container_name: pipesim_redis
+    networks:
+      - pipesim_net
+    ports:
+      - "6379:6379"
+    restart: always
+
+  # API
+  api:
+    build: .
+    restart: always
+    networks:
+      - pipesim_net
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      # [IMPORTANT] Override the database URL
+      # These is no localhost (127.0.0.1) inside the Docker network. The API should knock on the 'db' service name
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/pipesim_db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+  worker:
+    build: .
+    container_name: pipesim_worker
+    networks:
+      - pipesim_net
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+    env_file:
+      - .env
+    environment:
+      - YOLO_CONFIG_DIR=/tmp
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/pipesim_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+  frontend:
+    build:
+      context: ./frontend
+    container_name: pipesim_frontend
+    networks:
+      - pipesim_net
+    ports:
+      - "8502:8501" # Port for access from browser
+    depends_on:
+      - api # Starting front only after start API
+    environment:
+      - BACKEND_URL=http://api:8000
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=2000 # Upload limit (2gb)
+    volumes:
+      - ./frontend:/app
+      - ./uploads:/app/uploads
+
+  # Monitoring block
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    networks:
+      - pipesim_net
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - api # Backend is first
+    
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pipesim_grafana
+    networks:
+      - pipesim_net
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana # Saving dashboards
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: node_exporter
+    networks:
+      - pipesim_net
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+  
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.0-ubuntu22.04
+    container_name: dcgm-exporter
+    networks:
+      - pipesim_net
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "9400:9400"
+
+networks:
+  pipesim_net:
+    driver: bridge
+
+# Save database settings on hard disk, so that they don't disappear when restarting
+volumes:
+  postgres_data:
+  grafana_data:

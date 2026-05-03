@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'fastapi_app'
+    static_configs:
+      # access the api container directly through its internal port
+      - targets: ['pipesim-api-1:8000']
+
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['node_exporter:9100']
+
+  - job_name: 'dcgm-exporter'
+    static_configs:
+      - targets: ['dcgm-exporter:9400']
