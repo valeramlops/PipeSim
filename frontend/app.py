@@ -391,7 +391,7 @@ with tab_stats:
                 with mon_col1:
                     st.caption("💻 CPU Load")
                     components.iframe(
-                        "http://localhost:3000/d-solo/adslw28/cpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        "http://localhost:3000/d-solo/adnv5bh/cpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
                         height=250,
                         scrolling=False
                     )
@@ -399,7 +399,7 @@ with tab_stats:
                 with mon_col2:
                     st.caption("🧠 RAM Usage")
                     components.iframe(
-                        "http://localhost:3000/d-solo/ad6sk64/ram-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        "http://localhost:3000/d-solo/advw7tw/vram-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
                         height=250,
                         scrolling=False
                     )
@@ -407,7 +407,7 @@ with tab_stats:
                 with mon_col3:
                     st.caption("🎮 GPU Utilization (NVIDIA DCGM)")
                     components.iframe(
-                        "http://localhost:3000/d-solo/adjtpgs/gpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        "http://localhost:3000/d-solo/ad54mhl/gpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
                         height=250,
                         scrolling=False
                     )
