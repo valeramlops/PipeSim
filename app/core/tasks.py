@@ -1,7 +1,7 @@
 import asyncio
 from sqlalchemy import update
 from app.database import async_session
-from app.models import VideoRecord
+from app.models import VideoRecord, DetectionRecord
 import cv2
 import subprocess
 import gc
@@ -28,14 +28,17 @@ def process_video_task(self, input_path: str, output_path: str):
     logger.info(f"Starting video processing: {input_path}")
 
     # Universal db update func
-    def update_db_status(new_status: str, path: str = None, detections: dict = None):
+    def update_db_status(new_status: str, path: str = None, detections_stats: dict = None, detections_list: list = None):
         async def _async_update():
             async with async_session() as db:
                 await db.execute(
                     update(VideoRecord)
                     .where(VideoRecord.id == self.request.id)
-                    .values(status=new_status, result_path=path, detections_data = detections)
+                    .values(status=new_status, result_path=path, detections_data=detections_stats)
                 )
+                if detections_list:
+                    db.add_all(detections_list)
+                
                 await db.commit()
 
         try:
@@ -68,6 +71,7 @@ def process_video_task(self, input_path: str, output_path: str):
             "class_counts": {},
             "timeline": []
         }
+        detections_to_save = []
         frames_counted = 0
 
         while True:
@@ -87,6 +91,17 @@ def process_video_task(self, input_path: str, output_path: str):
                     conf = float(box.conf[0])
                     cls_id = int(box.cls[0])
                     class_name = model.names[cls_id]
+
+                    detections_to_save.append(
+                        DetectionRecord(
+                            filename=Path(input_path).name,
+                            result_json={
+                                "class": class_name,
+                                "confidence": conf,
+                                "bbox": [x1, y1, x2, y2]
+                            }
+                        )
+                    )
 
                     # Data collecting
                     stats["class_counts"][class_name] = stats["class_counts"].get(class_name, 0) + 1
@@ -187,7 +202,8 @@ def process_video_task(self, input_path: str, output_path: str):
         update_db_status(
             new_status="completed",
             path=str(output_path),
-            detections=stats
+            detections_stats=stats,
+            detections_list=detections_to_save
         )
 
         return {
