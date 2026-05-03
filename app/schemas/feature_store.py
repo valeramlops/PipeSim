@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, JSON, DateTime, func
-from app.core.database import Base
+from app.database import Base
 
 class ProcessedFeature(Base):
     """

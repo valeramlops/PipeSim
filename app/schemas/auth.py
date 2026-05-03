@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
-from app.core.database import Base
+from app.database import Base
 
 class APIKey(Base):
     __tablename__ = "api_keys"

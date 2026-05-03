@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON, Float
 from datetime import datetime
-from app.core.database import Base
+from app.database import Base
 
 class ModelVersion(Base):
     __tablename__ = "model_versions"

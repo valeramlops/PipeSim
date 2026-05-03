@@ -22,11 +22,12 @@ from app.api.vision import UPLOAD_VIDEO_DIR, UPLOAD_IMAGE_DIR
 from app.database import engine, Base
 import app.models # noqa: F401
 
-import app.schemas.auth
-import app.schemas.feature_store
-import app.schemas.model_version
-import app.schemas.passenger
-import app.schemas.prediction
+from app.models import DetectionRecord, VideoRecord
+from app.schemas.auth import APIKey
+from app.schemas.feature_store import ProcessedFeature
+from app.schemas.model_version import ModelVersion
+from app.schemas.passenger import Passenger
+from app.schemas.prediction import Prediction
 
 from contextlib import asynccontextmanager
 
