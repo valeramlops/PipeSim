@@ -7,8 +7,6 @@ import numpy as np
 import uuid
 from pathlib import Path
 
-import streamlit.components.v1 as components
-
 # Page setting (Always first in Streamlit)
 st.set_page_config(
     page_title="PipeSim MLOps",
@@ -390,26 +388,23 @@ with tab_stats:
 
                 with mon_col1:
                     st.caption("💻 CPU Load")
-                    components.iframe(
-                        "http://localhost:3000/d-solo/adnv5bh/cpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
-                        height=250,
-                        scrolling=False
+                    st.iframe(
+                        "http://localhost:3000/d-solo/adkf7f9/cpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        height=250
                     )
 
                 with mon_col2:
                     st.caption("🧠 RAM Usage")
-                    components.iframe(
-                        "http://localhost:3000/d-solo/advw7tw/vram-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
-                        height=250,
-                        scrolling=False
+                    st.iframe(
+                        "http://localhost:3000/d-solo/adgfgls/vram-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        height=250
                     )
 
                 with mon_col3:
                     st.caption("🎮 GPU Utilization (NVIDIA DCGM)")
-                    components.iframe(
-                        "http://localhost:3000/d-solo/ad54mhl/gpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
-                        height=250,
-                        scrolling=False
+                    st.iframe(
+                        "http://localhost:3000/d-solo/adg5l4c/gpu-usage?orgId=1&timezone=browser&panelId=panel-1&refresh=5s",
+                        height=250
                     )
 
                 st.divider()
